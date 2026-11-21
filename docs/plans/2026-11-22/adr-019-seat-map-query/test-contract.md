@@ -9,6 +9,7 @@
 | `seat.seat-map.mode` | `none` · `ttl` · `redis` · `event` | `none` |
 | `seat.seat-map.ttl` | Duration (`ttl` · `redis`에서 씀) | `1s` |
 | `seat.seat-map.push.enabled` | `true` / `false` | `false` |
+| `seat.seat-map.redis-timeout` | Duration (`redis` 모드의 좌석 맵 Redis 명령 제한 시간 — 리뷰 루프 1 R1-G로 더함) | `200ms` |
 
 - 기동 검사: `seat.seat-map.mode=event` 또는 `seat.seat-map.push.enabled=true`인데 `seat.hold.expiry-mode`가 `sweep`이 아니면 기동이 실패한다. 실패 메시지(원인 사슬 중 한 메시지)에 `seat.seat-map`과 `sweep`이 함께 들어간다.
 - 캐시의 TTL은 앱의 `Clock` 빈으로 잰다(시험은 `IntegrationTest`의 `MutableClock`을 옮겨 만료시킨다). Redis에 넣는 항목의 TTL도 같은 시계 기준으로 판정한다(Redis 자체 만료에만 기대지 않는다 — 시계를 옮기면 TTL이 지난 것으로 본다).
@@ -30,8 +31,9 @@
 |---|---|---|---|
 | `seat.seatmap.requests` | counter | `mode`, `source`(`db` · `cache`) | 맵 GET 한 번에 1. 캐시에서 답하면 `cache`, DB를 읽었으면 `db` |
 | `seat.seatmap.age` | timer | `mode` | 응답한 맵의 나이(응답 시각 − 그 맵을 DB에서 읽기 시작한 시각, `Clock` 기준) |
-| `seat.seatmap.redis.failures` | counter | `op`(`get` · `put`) | Redis 읽기 · 쓰기 실패 수(실패해도 응답은 DB로 200) |
+| `seat.seatmap.redis.failures` | counter | `op`(`get` · `put` · `clear` — clear는 리뷰 루프 1 R1-B로 더함) | Redis 읽기 · 쓰기 실패 수(실패해도 응답은 DB로 200) |
 | `seat.seatmap.push.connections` | gauge | 없음 | 열린 SSE 연결 수 |
+| `seat.seatmap.signal.failures` | counter | 없음 | 커밋 뒤 좌석 맵 신호가 예외로 실패한 수(리뷰 루프 1 R1-I로 더함 — 예외는 밖으로 던지지 않는다) |
 
 ## 4. 시험용 접점 (운영에서는 null — 순서 경합 시험 전용)
 
