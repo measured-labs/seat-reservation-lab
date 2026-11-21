@@ -67,3 +67,10 @@
 - 질문: ADR-019 1단계 명세를 합의할까요? (docs/plans/2026-11-22/adr-019-seat-map-query/requirement-spec.md) 핵심: ① 좌석 맵 응답의 status를 available(true/false)로 바로 바꿉니다. ② 조회 후보 손잡이 seat.seat-map.mode를 none·ttl·redis·event 넷으로 두고 기본은 none입니다. SSE 푸시는 손잡이로 두고 기본은 꺼 둡니다. ③ event와 SSE는 좌석 맵을 바꾸는 모든 쓰기 경로(선점·묶음·해제·만료 sweep·lazy 회수·대체 배정)에서 커밋 뒤에 갱신합니다. lazy·derived 만료 방식은 시간만으로 홀드가 풀려 이벤트로 잡을 수 없으므로, 이 조합은 기동 검사로 거부합니다. ④ redis 모드에서 Redis가 실패하면 DB 조회로 응답합니다. ⑤ 문서 작업: 번호 이동 11차(번호만 고침), 새 ADR-020(결과 관리 3종, 가설), ADR-019 설계 절. 검증: 재현 스모크 먼저 → 설계 선검증(codex) → 블라인드 테스트 워커 → 쓰기 경로 대조표 → 듀얼 리뷰 루프(새 재현 규칙). k6 측정은 2단계 명세로 따로 합니다.
 - 선택지: 합의, auto로 진행 (Recommended) / 고칠 것 있음
 - 답: 합의, auto로 진행 (Recommended)
+
+## 2026-11-22 04:18:03 (toolu_01YSJuTowgQ84s7ZwjtPXLf8)
+
+### 갱신 신호
+- 질문: 좌석 맵을 바꾸는 쓰기 경로가 명세 목록보다 많았습니다(JDBC 문장과 JPA 엔티티를 합쳐 약 14곳, 11파일). 하나라도 빠뜨리면 조용히 낡은 맵이 나갑니다. event 모드와 SSE의 갱신 신호를 어디서 낼까요?
+- 선택지: 앱 쓰기 지점 + 감시 테스트 (Recommended) / DB 트리거 + LISTEN/NOTIFY / 둘 다 후보로 비교
+- 답: 앱 쓰기 지점 + 감시 테스트 (Recommended)
