@@ -15,6 +15,7 @@ import com.jun.labs.seatreservation.service.impl.hold.sqlStateOf
 import com.jun.labs.seatreservation.service.impl.limit.limitExceeded
 import com.jun.labs.seatreservation.service.impl.limit.upsertQuota
 import com.jun.labs.seatreservation.service.impl.limit.upsertSqlFor
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.springframework.dao.DataAccessException
@@ -42,6 +43,7 @@ class LazyHoldProcess(
     private val counters: ExpiryCounters,
     private val changes: MemoryChangedPairs,
     private val meters: MeterRegistry,
+    private val seatMap: SeatMapChanges,
 ) {
     private val upsertSql = upsertSqlFor(properties)
     private val ttlSeconds = properties.ttl.toMillis() / 1_000.0
@@ -105,6 +107,7 @@ class LazyHoldProcess(
             if (properties.expiryMode.storesHeld) {
                 jdbc.update("UPDATE product_seat SET status = 'HELD' WHERE id = ? AND status = 'AVAILABLE'", command.seatId)
             }
+            seatMap.publish(s, listOf(command.seatId)) // ADR-019 — D는 좌석 행을 쓰지 않아도 보이는 상태가 바뀐다(커밋 뒤)
             return HoldSeatResult(
                 holdId = (row["id"] as Number).toLong(), seatId = command.seatId, expiresAt = (row["expires_at"] as Timestamp).toInstant(),
             )
@@ -138,6 +141,7 @@ class LazyHoldProcess(
         if (properties.expiryMode == ExpiryMode.LAZY_SWEEP) {
             fixReclaimedSeats(reclaimed.map { (it["seat_id"] as Number).toLong() }.filter { it != command.seatId }.distinct())
         }
+        seatMap.publish(s, reclaimed.map { (it["seat_id"] as Number).toLong() }.distinct()) // ADR-019 — 회수(H4) · 되돌림(H4b) 좌석
         // H5 감소(n = H4 행 수) — 0행이면 복구(§2.4) · 문장은 ExpiryCounters의 방식별 가드 문장(DS14-6)
         counters.decrementDeleted(ExpiryCounters.SOURCE_HOLD_RECLAIM, s, u, reclaimed.size)
         meters.counter(DELETED_METRIC, "path", PATH_RECLAIM).increment(reclaimed.size.toDouble())

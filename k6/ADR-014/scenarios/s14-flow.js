@@ -143,7 +143,7 @@ function availableSeats(res) {
   let list;
   try { list = JSON.parse(res.body); } catch (e) { return null; }
   const out = [];
-  for (let i = 0; i < list.length; i++) if (list[i].status === 'AVAILABLE') out.push(list[i].seatId);
+  for (let i = 0; i < list.length; i++) if (list[i].available === true) out.push(list[i].seatId);
   return out;
 }
 export function mapFlow() {

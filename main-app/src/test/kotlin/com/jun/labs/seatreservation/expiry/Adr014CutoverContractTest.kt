@@ -45,7 +45,16 @@ class Adr014CutoverContractTest : BootTestBase() {
         val port = environment.getProperty("local.server.port")
         val res = http.send(HttpRequest.newBuilder(URI.create("http://localhost:$port/api/schedules/$s/seats")).GET().build(), HttpResponse.BodyHandlers.ofString())
         assertEquals(200, res.statusCode(), res.body().take(300))
-        return mapper.readTree(res.body()).associate { it.get("seatId").asLong() to it.get("status").asText() }
+        // ADR-019 설계-1: 응답은 available만 — false는 DB 저장 상태로 RESERVED와 HELD(활성 홀드)를 가른다(판별력 유지 · DV-5)
+        val db = getBean(JdbcTemplate::class.java)
+        return mapper.readTree(res.body()).associate { e ->
+            val id = e.get("seatId").asLong()
+            id to when {
+                e.get("available").asBoolean() -> "AVAILABLE"
+                db.storedStatus(id) == "RESERVED" -> "RESERVED"
+                else -> "HELD"
+            }
+        }
     }
 
     /** 앱이 만든 홀드를 DB 기준 1분 전 만료로(Q10 — 운영 SQL에 시각 훅을 두지 않는다). */

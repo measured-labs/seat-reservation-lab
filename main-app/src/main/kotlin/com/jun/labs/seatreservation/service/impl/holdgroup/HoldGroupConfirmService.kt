@@ -14,6 +14,7 @@ import com.jun.labs.seatreservation.service.impl.payment.CompensationTasks
 import com.jun.labs.seatreservation.service.impl.payment.PaymentConfirmService
 import com.jun.labs.seatreservation.service.impl.payment.PaymentIntents
 import com.jun.labs.seatreservation.service.impl.payment.PaymentIntents.State
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -43,6 +44,7 @@ class HoldGroupConfirmService(
     private val changes: MemoryChangedPairs,
     private val clock: Clock,
     private val meters: MeterRegistry,
+    private val seatMap: SeatMapChanges,
 ) {
     fun confirm(groupId: Long, userId: Long, paymentUid: String): List<GroupReservation> {
         val rejected = try {
@@ -107,6 +109,7 @@ class HoldGroupConfirmService(
             State.CONFIRMED.name, reservations.minOf { it.reservationId }, uid,
         )
         changes.changed(intent.scheduleId, userId)
+        seatMap.publish(intent.scheduleId, seats) // ADR-019 — HELD → RESERVED(방향 무관 · 커밋 뒤)
         return reservations.sortedBy { it.seatId }
     }
 

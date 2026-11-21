@@ -58,6 +58,16 @@ seat:
   hold-group:
     enabled: true
     mode: split
+  # 좌석 맵 조회 방식(ADR-019 — SeatMapProperties). 기본 = none(캐시 없음 — 요청마다 SQL 한 문장). 기본값은 2단계 측정 뒤 정한다.
+  #   응답은 좌석마다 available(true = 지금 고를 수 있음 · false = HELD · RESERVED). mode = none | ttl(앱 메모리 TTL) | redis(Redis 공유 · TTL만 — spring.data.redis.* 연결) |
+  #   event(앱 메모리 · 좌석 상태를 쓰는 경로가 커밋 뒤 그 회차를 무효화). ttl은 ttl · redis의 캐시 수명(맵을 DB에서 읽기 시작한 시각부터 앱 Clock).
+  #   push.enabled = SSE GET /api/schedules/{id}/seats/stream(끄면 404). event · push는 hold.expiry-mode=sweep에서만 — 기동 검사가 거부한다(자동 후퇴 없음).
+  #   ttl · event 캐시와 푸시는 앱 프로세스 안에만 있다(다중 인스턴스 무효화 · 전파는 범위 밖).
+  seat-map:
+    mode: none
+    ttl: 1s
+    push:
+      enabled: false
   hold:
     ttl: 5m
     max-per-user: 2

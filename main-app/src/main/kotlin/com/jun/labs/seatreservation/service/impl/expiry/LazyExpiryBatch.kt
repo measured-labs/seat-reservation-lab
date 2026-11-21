@@ -9,6 +9,7 @@ import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companio
 import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companion.MISSING_METRIC
 import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companion.PATH_BATCH
 import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companion.SKIP_LOCKED_METRIC
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
@@ -34,6 +35,8 @@ class LazyExpiryBatch(
     private val properties: SeatHoldProperties,
     private val counters: ExpiryCounters,
     private val meters: MeterRegistry,
+    /** ADR-019 좌석 맵 변경 신호 — 직접 생성(테스트)할 때는 없다 */
+    private val seatMap: SeatMapChanges? = null,
 ) {
     private val mode = properties.expiryMode
 
@@ -143,6 +146,7 @@ class LazyExpiryBatch(
         decrement(deletedByPair)
         // C6 좌석 상태 — 잠근 좌석만 · 잠근 뒤 새 문장(§2.3)
         revertSeats(jdbc, meters, PATH_BATCH, locked)
+        seatMap?.publishSeats(locked) // ADR-019 — 잠근 좌석(되돌렸을 수 있음 · 회차는 좌석에서 읽는다 · 커밋 뒤)
         return deleted
     }
 
