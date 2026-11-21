@@ -13,7 +13,7 @@
 
 - 기동 검사: `seat.seat-map.mode=event` 또는 `seat.seat-map.push.enabled=true`인데 `seat.hold.expiry-mode`가 `sweep`이 아니면 기동이 실패한다. 실패 메시지(원인 사슬 중 한 메시지)에 `seat.seat-map`과 `sweep`이 함께 들어간다.
 - 캐시의 TTL은 앱의 `Clock` 빈으로 잰다(시험은 `IntegrationTest`의 `MutableClock`을 옮겨 만료시킨다). Redis에 넣는 항목의 TTL도 같은 시계 기준으로 판정한다(Redis 자체 만료에만 기대지 않는다 — 시계를 옮기면 TTL이 지난 것으로 본다).
-- `redis` 모드의 Redis 연결은 기존 `spring.data.redis.*` 설정을 쓴다. 시험은 기존 `RedisTestcontainersConfiguration`을 쓴다.
+- `redis` 모드의 좌석 맵 Redis 연결은 전용 클라이언트다(`spring.data.redis`의 host · port · 인증 · `ssl.enabled`를 따르고 제한 시간은 `seat.seat-map.redis-timeout`). 시험은 기존 `RedisTestcontainersConfiguration`을 쓴다. Redis 키: 맵 `seatmap:{회차}`(값 `{readAt, epoch, seats}`) · 초기화 세대 `seatmap-epoch`(리뷰 루프 2 R2-A로 더함).
 
 ## 2. HTTP
 
