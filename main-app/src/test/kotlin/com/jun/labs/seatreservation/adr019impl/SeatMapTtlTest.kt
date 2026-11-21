@@ -4,7 +4,14 @@ import com.jun.labs.seatreservation.RedisTestcontainersConfiguration
 import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapView
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import com.jun.labs.seatreservation.api.USER_ID_HEADER
+import org.springframework.context.ApplicationContext
 import org.springframework.context.annotation.Import
+import org.springframework.test.annotation.DirtiesContext
+import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.web.servlet.post
+import org.testcontainers.containers.GenericContainer
+import kotlin.test.assertTrue
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.test.context.TestPropertySource
 import java.time.Duration
@@ -65,6 +72,59 @@ class SeatMapRedisTest : SeatMapTtlCases("redis") {
         assertEquals(clock.instant().toString(), node.get("readAt").asText())
         assertEquals(a, node.get("seats").first().get("seatId").asLong())
         assertNull(meters.find(M_REDIS_FAILURES).counter())
+    }
+
+    @Test
+    fun `A — 읽을 수 없는 Redis 값(readAt 형식 틀림)은 get 실패로 세고 DB로 200`() {
+        val (a) = seats(1)
+        redis.opsForValue().set("${SeatMapView.REDIS_KEY_PREFIX}$s", """{"readAt":"x","seats":[]}""")
+        val get0 = meters.find(M_REDIS_FAILURES).tags("op", "get").counter()?.count() ?: 0.0
+        assertEquals(mapOf(a to true), map())
+        assertEquals(get0 + 1, meters.find(M_REDIS_FAILURES).tags("op", "get").counter()?.count() ?: 0.0)
+    }
+}
+
+/** G — Redis가 멈춘 뒤 좌석 맵 GET 한 번이 2초 안에 DB로 200(좌석 맵 전용 짧은 제한 시간 · 끊긴 동안 명령을 쌓지 않음). 컨테이너를 멈추므로 컨텍스트를 버린다 */
+@Import(RedisTestcontainersConfiguration::class)
+@TestPropertySource(properties = [MAP_REDIS])
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+class SeatMapRedisStopTest : SeatMapImplBase() {
+    @Autowired lateinit var appCtx: ApplicationContext
+
+    @Test
+    fun `G — Redis 멈춤 뒤 GET 한 번이 2초 안에 200 · 실패 지표`() {
+        val (a) = seats(1)
+        assertEquals(mapOf(a to true), map(), "준비 — Redis 연결")
+        (appCtx.getBean("redisContainer") as GenericContainer<*>).stop()
+        clock.advance(Duration.ofSeconds(2)) // TTL 지남 — Redis를 다시 읽고 다시 쓴다
+        val t0 = System.nanoTime()
+        val m = map()
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        assertEquals(mapOf(a to true), m)
+        assertTrue(ms < 2_000, "GET 한 번이 2초 안(실제 ${ms}ms)")
+        assertTrue((meters.find(M_REDIS_FAILURES).tags("op", "get").counter()?.count() ?: 0.0) >= 1.0)
+    }
+}
+
+/** B — redis 모드 + loadtest 초기화: 커밋 뒤 Redis의 좌석 맵 키도 비운다(초기화 직후 TTL 안 GET이 새 시드) */
+@ActiveProfiles("loadtest")
+@Import(RedisTestcontainersConfiguration::class)
+@TestPropertySource(properties = [MAP_REDIS])
+class SeatMapResetRedisTest : SeatMapImplBase() {
+    @Autowired lateinit var redis: StringRedisTemplate
+
+    private fun reset() = assertEquals(200, mockMvc.post("/internal/reset?schedules=1&seatsPerSchedule=3").andReturn().response.status)
+
+    @Test
+    fun `B — 초기화 뒤 TTL 안 GET이 새 시드를 보인다 · Redis 좌석 맵 키가 지워진다`() {
+        reset()
+        val r = mockMvc.post("/api/schedules/1/seats/1/hold") { header(USER_ID_HEADER, 100) }.andReturn().response
+        assertEquals(201, r.status, r.contentAsString)
+        assertEquals(mapOf(1L to false, 2L to true, 3L to true), map(1))
+        assertTrue(redis.hasKey("${SeatMapView.REDIS_KEY_PREFIX}1"), "Redis에 적재")
+        reset()
+        assertEquals(false, redis.hasKey("${SeatMapView.REDIS_KEY_PREFIX}1"), "초기화 커밋 뒤 Redis 좌석 맵 키 비움")
+        assertEquals(mapOf(1L to true, 2L to true, 3L to true), map(1), "고정 시계(TTL 안)에서도 새 시드")
     }
 }
 

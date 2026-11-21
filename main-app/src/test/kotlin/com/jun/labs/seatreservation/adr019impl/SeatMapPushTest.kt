@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.jun.labs.seatreservation.TestcontainersConfiguration
 import com.jun.labs.seatreservation.api.USER_ID_HEADER
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapPush
 import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapTestHooks
 import com.jun.labs.seatreservation.support.IntegrationTest
 import com.jun.labs.seatreservation.support.PIN_A_OFF
@@ -114,6 +116,21 @@ class SeatMapPushTest : IntegrationTest() {
             }
         }
 
+        /** 뒤에서 계속 읽어 change 이벤트를 쌓는다(큰 change가 와도 이 클라이언트는 막히지 않는다) */
+        val changes = java.util.concurrent.LinkedBlockingQueue<JsonNode>()
+
+        fun readInBackground(): Sse {
+            Thread({
+                runCatching {
+                    while (true) {
+                        val l = reader!!.readLine() ?: break
+                        if (l.startsWith("data:") && l.startsWith("data:[{\"seatId\"") && !l.contains("\"section\"")) changes.add(mapper.readTree(l.removePrefix("data:")))
+                    }
+                }
+            }, "sse-y").apply { isDaemon = true }.start()
+            return this
+        }
+
         override fun close() = socket.close()
     }
 
@@ -210,6 +227,77 @@ class SeatMapPushTest : IntegrationTest() {
             assertTrue(System.nanoTime() < until, "$why: ${connections()}")
             Thread.sleep(100)
         }
+    }
+
+    @Autowired lateinit var push: SeatMapPush
+    @Autowired lateinit var changes: SeatMapChanges
+
+    @Suppress("UNCHECKED_CAST")
+    private fun subscriptionKeys(): Set<Long> =
+        (SeatMapPush::class.java.getDeclaredField("bySchedule").apply { isAccessible = true }.get(push) as Map<Long, Any>).keys
+
+    private fun awaitConnectionsAtMost(n: Double, why: String, seconds: Long = 30) {
+        val until = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds)
+        while (connections() > n) {
+            assertTrue(System.nanoTime() < until, "$why: ${connections()}")
+            Thread.sleep(100)
+        }
+    }
+
+    @Test
+    fun `D — 회차 여러 개를 열고 닫으면 회차별 구독 맵에 그 회차 키가 남지 않는다`() {
+        val ids = (1..5).map {
+            val sc = productScheduleRepository.save(com.jun.labs.seatreservation.domain.ProductSchedule(productId = schedule.productId, startsAt = schedule.startsAt))
+            productSeatRepository.save(com.jun.labs.seatreservation.domain.ProductSeat(scheduleId = sc.id!!, section = "A", rowNo = 1, seatNo = 1))
+            sc.id!!
+        }
+        ids.forEach { id -> Sse(id).use { assertEquals(200, it.open().status); assertEquals("snapshot", it.next().first) } }
+        awaitConnections(0.0, "닫은 연결 정리")
+        assertEquals(emptySet(), subscriptionKeys().intersect(ids.toSet()), "마지막 구독이 빠진 회차 키는 지운다")
+    }
+
+    @Test
+    fun `F2 — 읽지 않는 연결 X가 있어도 Y는 5초 안에 change를 받는다 · X는 막힘 상한을 넘으면 닫힌다`() {
+        jdbcTemplate.update(
+            "INSERT INTO product_seat (schedule_id, section, row_no, seat_no, status) SELECT ?, 'A', (i - 1) / 50 + 1, (i - 1) % 50 + 1, 'AVAILABLE' FROM generate_series(1, 5000) i", s,
+        )
+        val seatIds = jdbcTemplate.queryForList("SELECT id FROM product_seat WHERE schedule_id = ? ORDER BY id", Long::class.java, s)
+        val target = seatIds.last()
+        awaitConnections(0.0, "앞 시험의 연결 정리")
+        // X: 작은 수신 버퍼 · 첫 맵까지만 읽고 그 뒤 읽지 않는다
+        val x = Socket().apply { receiveBufferSize = 1024; connect(java.net.InetSocketAddress("127.0.0.1", this@SeatMapPushTest.port)) }
+        x.getOutputStream().apply { write("GET /api/schedules/$s/seats/stream HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n\r\n".toByteArray()); flush() }
+        x.soTimeout = 15_000
+        val seen = StringBuilder()
+        val buf = ByteArray(8192)
+        while (true) {
+            val n = x.getInputStream().read(buf)
+            check(n >= 0) { "X 스트림이 끝났다" }
+            seen.append(String(buf, 0, n, Charsets.UTF_8))
+            val i = seen.indexOf("event:snapshot")
+            if (i >= 0 && seen.indexOf("\n\n", i) > 0) break
+        }
+        Sse(s).use { y ->
+            assertEquals(200, y.open().status)
+            assertEquals("snapshot", y.next().first)
+            y.readInBackground()
+            repeat(20) { changes.publish(s, seatIds.dropLast(1)); Thread.sleep(100) } // 큰 변경(4999석) 신호 — X의 소켓 버퍼를 채운다
+            Thread.sleep(1_000)
+            y.changes.clear()
+            val t0 = System.nanoTime()
+            hold(target, 100)
+            var gotMs = -1L
+            while ((System.nanoTime() - t0) < TimeUnit.SECONDS.toNanos(5)) {
+                val ev = y.changes.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                if (ev.any { it.get("seatId").asLong() == target && !it.get("available").asBoolean() }) {
+                    gotMs = (System.nanoTime() - t0) / 1_000_000
+                    break
+                }
+            }
+            assertTrue(gotMs in 0..5_000, "Y가 5초 안에 target change를 받는다(실제 ${gotMs}ms)")
+            awaitConnectionsAtMost(1.0, "읽지 않는 X는 막힘 상한(10초)을 넘으면 닫힌다(Y만 남는다)")
+        }
+        runCatching { x.close() }
     }
 
     @Test

@@ -66,6 +66,8 @@ seat:
   seat-map:
     mode: none
     ttl: 1s
+    # redis 모드 전용 Redis 연결의 명령 · 연결 제한 시간(넘으면 실패로 세고 DB로 답한다). 공용 spring.data.redis.* 연결(Redis 선점 전략 등)과 별개다
+    redis-timeout: 200ms
     push:
       enabled: false
   hold:

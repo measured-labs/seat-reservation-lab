@@ -9,7 +9,6 @@ import com.jun.labs.seatreservation.service.impl.expiry.SeatMapEntry
 import com.jun.labs.seatreservation.service.impl.expiry.SeatMapQuery
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
-import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Component
 import java.time.Clock
 import java.time.Duration
@@ -27,7 +26,8 @@ data class SeatMapChange(val seatId: Long, val available: Boolean)
  * ADR-019 좌석 맵 응답 층(설계-1 · 2 · 3 · 4) — [SeatMapQuery](만료 방식별 보이는 상태 · 3값) 위에서 두 상태로 바꾸고 `seat.seat-map.mode`대로 캐시한다.
  * - none: 요청마다 SQL 한 문장(지금 그대로)
  * - ttl · event: 앱 메모리(회차별). ttl은 맵을 DB에서 읽기 시작한 시각 + TTL 전까지(앱 Clock · 정각 = 지남) · event는 무효화 전까지
- * - redis: 키 `seatmap:{회차}`에 읽기 시작 시각과 맵을 둔다 — 판정은 앱 Clock(Redis 자체 만료는 청소용). 읽기 · 쓰기 실패는 DB 응답 + 지표(설계-4)
+ * - redis: 키 `seatmap:{회차}`에 읽기 시작 시각과 맵을 둔다 — 판정은 앱 Clock(Redis 자체 만료는 청소용). 읽기 · 쓰기 실패(읽을 수 없는 값 포함)는 DB 응답 + 지표(설계-4).
+ *   Redis 접근은 좌석 맵 전용 클라이언트([SeatMapRedis] — 짧은 제한 시간)로만 한다
  * 세대 번호(설계-3 첫째 순서): 무효화가 회차 세대를 올린다. 적재는 DB를 읽기 전에 본 세대가 그대로일 때만 하고, 꺼낼 때도 세대가 같은 항목만 쓴다 —
  * DB를 읽은 뒤 · 적재 전에 무효화가 끼어든 옛 맵은 나가지 않는다. 전체 비움(loadtest 초기화)은 모든 회차의 세대를 함께 올린다(epoch).
  */
@@ -37,7 +37,7 @@ class SeatMapView(
     properties: SeatMapProperties,
     private val clock: Clock,
     private val meters: MeterRegistry,
-    private val redis: StringRedisTemplate,
+    private val redis: SeatMapRedis,
     private val mapper: ObjectMapper,
 ) {
     private val mode = properties.mode
@@ -80,10 +80,20 @@ class SeatMapView(
         local.remove(scheduleId)
     }
 
-    /** 전체 비움(loadtest 초기화 커밋 뒤 — 지워진 회차의 맵이 남지 않게). 앱 메모리만 — Redis 맵은 TTL로 낡음을 막는다 */
+    /**
+     * 전체 비움(loadtest 초기화 커밋 뒤 — 지워진 회차의 맵이 남지 않게). 앱 메모리 + redis 모드면 Redis의 좌석 맵 키(`seatmap:*`)도 지운다.
+     * Redis 실패는 지표(op=clear)로 세고 초기화를 막지 않는다(그 키는 TTL로 낡음이 막힌다). 다른 모드는 Redis에 닿지 않는다.
+     */
     fun clearAll() {
         epoch.incrementAndGet()
         local.clear()
+        if (mode != SeatMapMode.REDIS) return
+        try {
+            redis.deleteByPrefix(REDIS_KEY_PREFIX)
+        } catch (e: RuntimeException) {
+            meters.counter(REDIS_FAILURES_METRIC, "op", "clear").increment()
+            log.warn("좌석 맵 Redis 전체 비움 실패 — 남은 키는 TTL로 낡음이 막힌다: {}", e.toString())
+        }
     }
 
     private fun stamp(scheduleId: Long) = Stamp(epoch.get(), generations[scheduleId] ?: 0L)
@@ -105,28 +115,26 @@ class SeatMapView(
     private fun redis(scheduleId: Long): List<SeatMapSeat> {
         val key = "$REDIS_KEY_PREFIX$scheduleId"
         val raw = try {
-            redis.opsForValue().get(key)
+            redis.get(key)
         } catch (e: RuntimeException) {
             redisFailure("get", scheduleId, e)
             null
         }
         if (raw != null) {
+            // 읽을 수 없는 값(JSON · 시각 형식) — 없는 것으로 보고 DB로(조용히 넘기지 않는다: get 실패로 센다)
             val entry = try {
-                mapper.readValue<RedisEntry>(raw)
+                mapper.readValue<RedisEntry>(raw).let { Instant.parse(it.readAt) to it.seats }
             } catch (e: Exception) {
-                redisFailure("get", scheduleId, e) // 읽을 수 없는 값 — 없는 것으로 보고 DB로(조용히 넘기지 않는다)
+                redisFailure("get", scheduleId, e)
                 null
             }
-            if (entry != null) {
-                val readAt = Instant.parse(entry.readAt)
-                if (clock.instant().isBefore(readAt.plus(ttl))) return respond(entry.seats, readAt, fromCache)
-            }
+            if (entry != null && clock.instant().isBefore(entry.first.plus(ttl))) return respond(entry.second, entry.first, fromCache)
         }
         val readAt = clock.instant()
         val seats = readDb(scheduleId)
         SeatMapTestHooks.afterDbRead?.invoke(scheduleId)
         try {
-            redis.opsForValue().set(key, mapper.writeValueAsString(RedisEntry(readAt.toString(), seats)), ttl.plus(REDIS_EXPIRY_SLACK))
+            redis.set(key, mapper.writeValueAsString(RedisEntry(readAt.toString(), seats)), ttl.plus(REDIS_EXPIRY_SLACK))
         } catch (e: RuntimeException) {
             redisFailure("put", scheduleId, e)
         }

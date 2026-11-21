@@ -12,6 +12,8 @@ data class SeatMapProperties(
     val mode: SeatMapMode = SeatMapMode.NONE,
     /** ttl · redis의 캐시 수명 — 맵을 DB에서 읽기 시작한 시각부터 앱 Clock으로 잰다(설계-4) */
     val ttl: Duration = Duration.ofSeconds(1),
+    /** redis 모드의 좌석 맵 전용 Redis 명령 · 연결 제한 시간 — 넘으면 실패로 세고 DB로 답한다(S6). 공용 `spring.data.redis.timeout`과 별개 */
+    val redisTimeout: Duration = Duration.ofMillis(200),
     val push: Push = Push(),
 ) {
     data class Push(

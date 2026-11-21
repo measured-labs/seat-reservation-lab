@@ -3,6 +3,8 @@ package com.jun.labs.seatreservation.api
 import com.jun.labs.seatreservation.domain.SeatReservationException
 import com.jun.labs.seatreservation.domain.httpStatusCode
 import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapPush
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.boot.context.properties.bind.Binder
 import org.springframework.context.annotation.Condition
 import org.springframework.context.annotation.ConditionContext
@@ -15,11 +17,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 
 /**
  * ADR-019 상태 푸시(SSE — 설계-2) — `seat.seat-map.push.enabled=true`일 때만 등록한다(끄면 404). 연결 직후 `snapshot`(전체 맵) · 그 뒤 `change`(바뀐 좌석만).
- * 회차가 없으면 스트림을 열기 전에 404다.
+ * 회차가 없으면 스트림을 열기 전에 404다. 응답은 서블릿 비동기 · 비차단 쓰기로 SeatMapPush가 직접 쓴다(요청 스레드 · 전송 스레드가 소켓 쓰기에서 기다리지 않는다).
  */
 @RestController
 @Profile("!reconciler")
@@ -28,7 +29,7 @@ class SeatMapStreamController(
     private val push: SeatMapPush,
 ) {
     @GetMapping("/api/schedules/{scheduleId}/seats/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
-    fun stream(@PathVariable scheduleId: Long): SseEmitter = push.open(scheduleId)
+    fun stream(@PathVariable scheduleId: Long, request: HttpServletRequest, response: HttpServletResponse) = push.open(scheduleId, request, response)
 
     /**
      * 거부(회차 없음)는 여기서 JSON 본문으로 답한다 — 요청의 Accept가 text/event-stream뿐이라 공용 예외 처리기(ApiExceptionHandler)의 JSON은

@@ -6,7 +6,11 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.test.context.TestPropertySource
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
+import com.jun.labs.seatreservation.service.HoldSeatCommand
+import com.jun.labs.seatreservation.service.HoldSeatUseCase
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -23,6 +27,7 @@ import kotlin.test.assertTrue
 class SeatMapEventPathsTest : SeatMapImplBase() {
     @Autowired lateinit var changes: SeatMapChanges
     @Autowired lateinit var tx: TransactionTemplate
+    @Autowired lateinit var holds: HoldSeatUseCase
 
     private fun cacheHits() = requests("event", "cache")
 
@@ -125,6 +130,23 @@ class SeatMapEventPathsTest : SeatMapImplBase() {
         assertEquals(hits + 1, cacheHits(), "롤백 뒤 GET은 적중(신호 없음)")
         changes.publish(s, listOf(a)) // 트랜잭션 밖
         mapAfterWrite()
+    }
+
+    @Test
+    fun `I — 같은 트랜잭션의 앞선 afterCommit 콜백이 던져도 신호가 빠지지 않는다`() {
+        val (a) = seats(1)
+        primed()
+        val thrown = runCatching {
+            tx.execute {
+                TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                    override fun afterCommit() = throw IllegalStateException("다른 afterCommit 콜백의 예외")
+                })
+                holds.hold(HoldSeatCommand(s, a, 100))
+            }
+        }.exceptionOrNull()
+        assertTrue(thrown is IllegalStateException, "다른 콜백의 예외는 그대로 올라온다: $thrown")
+        assertEquals("HELD", jdbcTemplate.queryForObject("SELECT status FROM product_seat WHERE id = ?", String::class.java, a), "커밋은 됐다")
+        assertEquals(mapOf(a to false), mapAfterWrite(), "우리 신호가 먼저 돌았다")
     }
 
     @Test

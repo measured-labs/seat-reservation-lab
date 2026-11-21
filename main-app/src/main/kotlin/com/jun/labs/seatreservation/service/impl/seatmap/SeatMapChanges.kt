@@ -2,6 +2,9 @@ package com.jun.labs.seatreservation.service.impl.seatmap
 
 import com.jun.labs.seatreservation.service.SeatMapMode
 import com.jun.labs.seatreservation.service.SeatMapProperties
+import io.micrometer.core.instrument.MeterRegistry
+import org.slf4j.LoggerFactory
+import org.springframework.core.Ordered
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionSynchronization
@@ -19,6 +22,7 @@ class SeatMapChanges(
     private val view: SeatMapView,
     private val push: SeatMapPush,
     private val jdbc: JdbcTemplate,
+    private val meters: MeterRegistry,
 ) {
     private val invalidates = properties.mode == SeatMapMode.EVENT
     private val pushes = properties.push.enabled
@@ -52,10 +56,30 @@ class SeatMapChanges(
         if (pushes) push.changed(scheduleId, seatIds)
     }
 
+    /**
+     * 커밋 뒤 전달. 우리 동기화는 가장 앞 순서로 돈다 — 같은 트랜잭션의 다른 afterCommit 콜백이 던지면 Spring이 뒤 콜백을 부르지 않으므로(신호 누락).
+     * 전달 자체의 예외도 밖으로 던지지 않는다(커밋은 이미 끝났다 — 호출자 응답을 바꾸거나 뒤 콜백을 막지 않게): ERROR 로그 + 지표 [SIGNAL_FAILURES_METRIC].
+     */
     private fun afterCommit(block: () -> Unit) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) return block()
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return guarded(block)
         TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
-            override fun afterCommit() = block()
+            override fun getOrder() = Ordered.HIGHEST_PRECEDENCE
+            override fun afterCommit() = guarded(block)
         })
+    }
+
+    private fun guarded(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: Exception) {
+            meters.counter(SIGNAL_FAILURES_METRIC).increment()
+            log.error("좌석 맵 변경 신호 전달 실패 — event 캐시 · 푸시가 이 변경을 놓쳤을 수 있다", e)
+        }
+    }
+
+    companion object {
+        private val log = LoggerFactory.getLogger(SeatMapChanges::class.java)
+        /** 커밋 뒤 신호 전달 실패 수(기대 0) */
+        const val SIGNAL_FAILURES_METRIC = "seat.seatmap.signal.failures"
     }
 }

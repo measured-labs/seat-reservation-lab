@@ -46,6 +46,25 @@ class SeatMapWriteSitesTest {
         "loadtest/LoadtestDataService.kt" to "loadtest/LoadtestDataService.kt",
     )
 
+    /** 파일 → 쓰기 지점 수(SQL 문장 수 + 쓰기 호출 수) — 아래 마지막 시험이 본다 */
+    private val writeSites = mapOf(
+        "domain/repository/ProductSeatRepository.kt" to 2, // holdIfAvailable · bumpVersion
+        "service/impl/hold/DbLockHoldStrategies.kt" to 2, // holdIfAvailable · bumpVersion 호출
+        "service/impl/HoldSeatProcess.kt" to 1, // seat.hold
+        "service/impl/ConfirmReservationService.kt" to 1, // seat.confirm
+        "service/impl/ExpireHoldsService.kt" to 1, // seat.expireHolds
+        "service/impl/AtomicConfirmProcess.kt" to 3, // ① · ② · ③ 전환
+        "service/impl/expiry/LazyHoldProcess.kt" to 3, // H10 · revertSeats 본문 · H4b의 revertSeats 호출
+        "service/impl/expiry/LazyExpiryBatch.kt" to 1, // C6 revertSeats 호출
+        "service/impl/expiry/LazyConfirmProcess.kt" to 1,
+        "service/impl/expiry/SweepConditionalBatch.kt" to 1, // B5
+        "service/impl/holdgroup/HoldGroupService.kt" to 2, // split · one-shot
+        "service/impl/holdgroup/HoldReleaseService.kt" to 1,
+        "service/impl/holdgroup/HoldGroupConfirmService.kt" to 1,
+        "service/impl/payment/SubstituteAllocator.kt" to 2, // 원래 좌석 · 새 좌석
+        "loadtest/LoadtestDataService.kt" to 3, // TRUNCATE · 시드 · 배경 시드
+    )
+
     private val sourceRoot: Path = Paths.get("src/main/kotlin/com/jun/labs/seatreservation").toAbsolutePath()
     private val classRoot: Path = Paths.get(ProductSeat::class.java.protectionDomain.codeSource.location.toURI())
 
@@ -66,7 +85,7 @@ class SeatMapWriteSitesTest {
     }
 
     /** 컴파일된 클래스마다 (원천 파일, 쓰기 호출 있음, 변경 신호 호출 있음) */
-    private class Scanned(val source: String, var writes: Boolean = false, var publishes: Boolean = false)
+    private class Scanned(val source: String, var writes: Int = 0, var publishes: Boolean = false)
 
     private fun scanClasses(): List<Scanned> = Files.walk(classRoot).use { paths ->
         paths.filter { it.extension == "class" }.toList().map { file ->
@@ -81,7 +100,7 @@ class SeatMapWriteSitesTest {
                 override fun visitMethod(access: Int, name: String?, descriptor: String?, signature: String?, exceptions: Array<out String>?): MethodVisitor =
                     object : MethodVisitor(Opcodes.ASM9) {
                         override fun visitMethodInsn(opcode: Int, owner: String, name: String, descriptor: String?, isInterface: Boolean) {
-                            if (isWriteCall(owner, name)) scanned.writes = true
+                            if (isWriteCall(owner, name)) scanned.writes++
                             if (owner == changesOwner && name in setOf("publish", "publishSeats", "publishAll")) scanned.publishes = true
                         }
                     }
@@ -90,15 +109,26 @@ class SeatMapWriteSitesTest {
         }
     }
 
-    private fun sqlWriters(): Set<String> = Files.walk(sourceRoot).use { paths ->
-        paths.filter { it.extension == "kt" && sqlWrite.containsMatchIn(it.readText()) }
-            .map { it.relativeTo(sourceRoot).invariantSeparatorsPathString }.toList().toSet()
+    /** 원천 파일 → 그 파일의 `product_seat` 쓰기 SQL 수 */
+    private fun sqlWriteCounts(): Map<String, Int> = Files.walk(sourceRoot).use { paths ->
+        paths.filter { it.extension == "kt" }.toList()
+            .associate { it.relativeTo(sourceRoot).invariantSeparatorsPathString to sqlWrite.findAll(it.readText()).count() }
+            .filterValues { it > 0 }
+    }
+
+    private fun sqlWriters(): Set<String> = sqlWriteCounts().keys
+
+    /** 파일 → 쓰기 지점 수(SQL 문장 수 + 쓰기 호출 수) */
+    private fun writeSiteCounts(): Map<String, Int> {
+        val calls = scanClasses().filter { it.writes > 0 }.groupBy { it.source }.mapValues { (_, c) -> c.sumOf { it.writes } }
+        val sql = sqlWriteCounts()
+        return (sql.keys + calls.keys).associateWith { (sql[it] ?: 0) + (calls[it] ?: 0) }
     }
 
     @Test
     fun `좌석 상태를 쓰는 파일 목록이 고정 목록과 같다(목록 밖 쓰기 = 실패)`() {
         val scanned = scanClasses()
-        val callWriters = scanned.filter { it.writes }.map { it.source }.toSet()
+        val callWriters = scanned.filter { it.writes > 0 }.map { it.source }.toSet()
         val actual = sqlWriters() + callWriters
         assertEquals(expected.keys.sorted(), actual.sorted(), "좌석 상태 쓰기 파일 — 새 경로면 SeatMapChanges 호출을 붙이고 목록에 더한다(SQL: ${sqlWriters().sorted()} · 호출: ${callWriters.sorted()})")
     }
@@ -110,5 +140,15 @@ class SeatMapWriteSitesTest {
             assertTrue(publisher in publishing, "$writer 의 쓰기 → $publisher 가 SeatMapChanges.publish* 를 불러야 한다(부르는 파일: ${publishing.sorted()})")
         }
         assertTrue(publishing.all { it in expected.values || it.startsWith("service/impl/seatmap/") }, "목록 밖에서 신호를 부르는 파일: ${publishing.sorted()}")
+    }
+
+    /**
+     * 파일별 쓰기 지점 수 고정 — 목록에 이미 있는 파일에 새 `product_seat` 쓰기(SQL 문장 · 쓰기 호출)를 더하면 수가 달라져 실패한다
+     * (새 쓰기가 신호를 부르는지 확인하고 수를 고친다). 한계: 같은 파일 안에서 쓰기 하나를 빼고 다른 쓰기를 더하면(수 같음) 잡지 못한다 ·
+     * 신호 호출이 쓰기와 같은 트랜잭션 경로에 있는지는 보지 않는다(경로마다 '쓰기 → 다음 GET 반영' 시험이 본다).
+     */
+    @Test
+    fun `파일별 쓰기 지점 수가 고정 값과 같다(목록 안 파일에 더한 쓰기 = 실패)`() {
+        assertEquals(writeSites.toSortedMap(), writeSiteCounts().toSortedMap(), "파일별 쓰기 지점 수(SQL 문장 + 쓰기 호출) — 늘었으면 새 쓰기가 SeatMapChanges를 부르는지 확인하고 고친다")
     }
 }
