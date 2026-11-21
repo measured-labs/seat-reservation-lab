@@ -301,6 +301,45 @@ class SeatMapPushTest : IntegrationTest() {
     }
 
     @Test
+    fun `R2-F — open 중 비동기 시작 · 출력 준비가 실패하면 구독과 연결 수가 남지 않는다`() {
+        createSeat(1)
+        awaitConnections(0.0, "앞 시험의 연결 정리")
+        val noAsync = org.springframework.mock.web.MockHttpServletRequest("GET", "/x").apply { isAsyncSupported = false }
+        assertTrue(runCatching { push.open(s, noAsync, org.springframework.mock.web.MockHttpServletResponse()) }.isFailure, "startAsync 실패")
+        assertEquals(0.0, connections())
+        assertTrue(s !in subscriptionKeys(), "구독이 남지 않는다")
+        val async = org.springframework.mock.web.MockHttpServletRequest("GET", "/x").apply { isAsyncSupported = true }
+        val noOut = object : org.springframework.mock.web.MockHttpServletResponse() {
+            override fun getOutputStream(): jakarta.servlet.ServletOutputStream = throw IllegalStateException("주입: 출력 준비 실패")
+        }
+        assertTrue(runCatching { push.open(s, async, noOut) }.isFailure, "출력 준비 실패")
+        assertEquals(0.0, connections())
+        assertTrue(s !in subscriptionKeys(), "구독이 남지 않는다")
+    }
+
+    @Test
+    fun `OQ2 — 1만 석 첫 맵의 끝이 하트비트를 기다리지 않고 나간다(연결부터 첫 맵 끝까지 5회 모두 300ms 안)`() {
+        jdbcTemplate.update(
+            "INSERT INTO product_seat (schedule_id, section, row_no, seat_no, status) SELECT ?, 'A', (i - 1) / 50 + 1, (i - 1) % 50 + 1, 'AVAILABLE' FROM generate_series(1, 10000) i", s,
+        )
+        awaitConnections(0.0, "앞 시험의 연결 정리")
+        Sse(s).use { it.open(); it.next() } // 예열(JIT · 연결 풀)
+        val took = (1..5).map { i ->
+            awaitConnections(0.0, "앞 연결 정리")
+            Thread.sleep((Math.random() * 1000).toLong()) // 하트비트 위상과 무관하게
+            val t0 = System.nanoTime()
+            Sse(s).use { sse ->
+                sse.open()
+                val (name, snapshot) = sse.next()
+                assertEquals("snapshot", name)
+                assertEquals(10_000, snapshot.size(), "회 $i")
+            }
+            (System.nanoTime() - t0) / 1_000_000
+        }
+        assertTrue(took.all { it < 300 }, "연결부터 첫 맵 끝까지(ms): $took")
+    }
+
+    @Test
     fun `회차 없음은 스트림을 열기 전에 404`() {
         val before = connections()
         Sse(987_654_321).use { assertEquals(404, it.open().status) }

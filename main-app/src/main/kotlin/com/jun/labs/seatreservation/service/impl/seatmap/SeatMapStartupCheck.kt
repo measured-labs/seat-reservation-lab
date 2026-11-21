@@ -38,6 +38,10 @@ class SeatMapStartupCheck(
             check(properties.mode !in TTL_MODES || properties.ttl > java.time.Duration.ZERO) {
                 "seat.seat-map.ttl은 0보다 커야 한다(seat.seat-map.mode=${properties.mode.tag}) — 현재 ${properties.ttl}"
             }
+            // redis-timeout은 redis 모드에서만 쓰므로 그때만 본다(다른 모드에서는 쓰지 않는 값이라 거부하지 않는다). 0 이하면 Lettuce가 제한 시간 없이 기다린다
+            check(properties.mode != SeatMapMode.REDIS || properties.redisTimeout > java.time.Duration.ZERO) {
+                "seat.seat-map.redis-timeout은 0보다 커야 한다(seat.seat-map.mode=redis — 좌석 맵 전용 Redis 명령 · 연결 제한 시간) — 현재 ${properties.redisTimeout} · 기본 200ms로 두려면 키를 지운다"
+            }
         }
 
         private val TTL_MODES = setOf(SeatMapMode.TTL, SeatMapMode.REDIS)

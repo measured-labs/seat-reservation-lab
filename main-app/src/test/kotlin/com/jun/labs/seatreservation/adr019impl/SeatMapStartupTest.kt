@@ -34,4 +34,15 @@ class SeatMapStartupTest : BootTestBase() {
         val failure = assertNotNull(bootFailure(freshDbUrl(), mapOf("seat.seat-map.mode" to "ttl", "seat.seat-map.ttl" to "0s")))
         assertTrue("seat.seat-map.ttl" in messages(failure), messages(failure))
     }
+
+    @Test
+    fun `OQ3 — redis 모드에서 redis-timeout 0 이하는 키 이름과 안내를 담아 거부(migrate 앞)`() {
+        for (t in listOf("0s", "-1s")) {
+            val url = freshDbUrl()
+            val failure = assertNotNull(bootFailure(url, mapOf("seat.seat-map.mode" to "redis", "seat.seat-map.redis-timeout" to t)), t)
+            val m = messages(failure)
+            assertTrue("seat.seat-map.redis-timeout" in m && "200ms" in m, "$t — 키 이름 · 안내: $m")
+            assertEquals(false, jdbcFor(url).queryForObject("SELECT to_regclass('flyway_schema_history') IS NOT NULL", Boolean::class.java), "$t — migrate 앞에서 거부")
+        }
+    }
 }

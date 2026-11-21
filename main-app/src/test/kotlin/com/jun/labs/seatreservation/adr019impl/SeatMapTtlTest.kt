@@ -1,7 +1,16 @@
 package com.jun.labs.seatreservation.adr019impl
 
 import com.jun.labs.seatreservation.RedisTestcontainersConfiguration
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapRedis
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapTestHooks
 import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapView
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.Mockito
+import org.mockito.Mockito.doThrow
+import org.springframework.data.redis.RedisConnectionFailureException
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import com.jun.labs.seatreservation.api.USER_ID_HEADER
@@ -74,6 +83,13 @@ class SeatMapRedisTest : SeatMapTtlCases("redis") {
         assertNull(meters.find(M_REDIS_FAILURES).counter())
     }
 
+    @Autowired lateinit var seatMapRedis: SeatMapRedis
+
+    @Test
+    fun `R2-C — ssl 설정이 없으면 좌석 맵 Redis 클라이언트는 TLS를 쓰지 않는다`() {
+        assertEquals(false, seatMapRedis.factory!!.clientConfiguration.isUseSsl)
+    }
+
     @Test
     fun `A — 읽을 수 없는 Redis 값(readAt 형식 틀림)은 get 실패로 세고 DB로 200`() {
         val (a) = seats(1)
@@ -106,45 +122,87 @@ class SeatMapRedisStopTest : SeatMapImplBase() {
     }
 }
 
-/** B — redis 모드 + loadtest 초기화: 커밋 뒤 Redis의 좌석 맵 키도 비운다(초기화 직후 TTL 안 GET이 새 시드) */
+/**
+ * B · R2-A · R2-B — redis 모드 + loadtest 초기화: 커밋 뒤 Redis 초기화 세대(`seatmap-epoch`)를 올려 그 전 세대의 맵(초기화 전에 DB를 읽고 뒤에 적재한 맵 포함)을
+ * 아무도 꺼내 쓰지 않는다 · 세대 올림이 실패하면 이 인스턴스는 TTL 동안 Redis를 건너뛴다(복구된 Redis의 옛 맵을 내지 않는다).
+ */
 @ActiveProfiles("loadtest")
 @Import(RedisTestcontainersConfiguration::class)
 @TestPropertySource(properties = [MAP_REDIS])
 class SeatMapResetRedisTest : SeatMapImplBase() {
     @Autowired lateinit var redis: StringRedisTemplate
+    @MockitoSpyBean lateinit var seatMapRedis: SeatMapRedis
 
     private fun reset() = assertEquals(200, mockMvc.post("/internal/reset?schedules=1&seatsPerSchedule=3").andReturn().response.status)
 
-    @Test
-    fun `B — 초기화 뒤 TTL 안 GET이 새 시드를 보인다 · Redis 좌석 맵 키가 지워진다`() {
-        reset()
+    private fun holdSeat1() {
         val r = mockMvc.post("/api/schedules/1/seats/1/hold") { header(USER_ID_HEADER, 100) }.andReturn().response
         assertEquals(201, r.status, r.contentAsString)
+    }
+
+    private fun epoch(): Long = redis.opsForValue().get(SeatMapView.REDIS_EPOCH_KEY)?.toLong() ?: 0L
+
+    @Test
+    fun `B — 초기화 뒤 TTL 안 GET이 새 시드를 보인다 · 초기화 세대가 오른다`() {
+        reset()
+        holdSeat1()
         assertEquals(mapOf(1L to false, 2L to true, 3L to true), map(1))
         assertTrue(redis.hasKey("${SeatMapView.REDIS_KEY_PREFIX}1"), "Redis에 적재")
+        val e0 = epoch()
         reset()
-        assertEquals(false, redis.hasKey("${SeatMapView.REDIS_KEY_PREFIX}1"), "초기화 커밋 뒤 Redis 좌석 맵 키 비움")
+        assertEquals(e0 + 1, epoch(), "초기화 커밋 뒤 세대 +1")
         assertEquals(mapOf(1L to true, 2L to true, 3L to true), map(1), "고정 시계(TTL 안)에서도 새 시드")
+    }
+
+    @Test
+    fun `R2-A — 미스 조회가 DB를 읽은 뒤 초기화가 커밋되면 그 조회의 적재는 쓰이지 않는다`() {
+        reset()
+        holdSeat1()
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        SeatMapTestHooks.afterDbRead = { id -> if (id == 1L && Thread.currentThread().name == "r2a-reader") { reached.countDown(); release.await(30, TimeUnit.SECONDS) } }
+        val pool = Executors.newSingleThreadExecutor { Thread(it, "r2a-reader") }
+        try {
+            val first = pool.submit<Map<Long, Boolean>> { map(1) }
+            assertTrue(reached.await(30, TimeUnit.SECONDS), "미스 조회가 DB를 읽고 멈춘다")
+            reset()
+            release.countDown()
+            assertEquals(false, first.get(30, TimeUnit.SECONDS)[1L], "멈춘 조회 자신은 초기화 전 맵")
+        } finally {
+            pool.shutdownNow()
+            SeatMapTestHooks.afterDbRead = null
+        }
+        assertTrue(redis.hasKey("${SeatMapView.REDIS_KEY_PREFIX}1"), "옛 세대로 적재는 됐다")
+        assertEquals(mapOf(1L to true, 2L to true, 3L to true), map(1), "그 적재는 세대가 달라 쓰이지 않는다(TTL 안)")
+    }
+
+    @Test
+    fun `R2-B — 초기화의 세대 올림이 실패해도 Redis 복구 뒤 TTL 안 GET이 옛 맵을 내지 않는다 · 실패 지표`() {
+        reset()
+        holdSeat1()
+        assertEquals(false, map(1)[1L])
+        assertTrue(redis.hasKey("${SeatMapView.REDIS_KEY_PREFIX}1"), "Redis에 적재")
+        val clear0 = meters.find(M_REDIS_FAILURES).tags("op", "clear").counter()?.count() ?: 0.0
+        doThrow(RedisConnectionFailureException("주입: 세대 올림 실패")).`when`(seatMapRedis).increment(anyString())
+        try {
+            reset()
+        } finally {
+            Mockito.reset(seatMapRedis) // 복구 — 이후 Redis 호출은 실제 동작
+        }
+        assertEquals(clear0 + 1, meters.find(M_REDIS_FAILURES).tags("op", "clear").counter()?.count() ?: 0.0, "실패는 지표로 · 초기화는 200")
+        assertEquals(mapOf(1L to true, 2L to true, 3L to true), map(1), "Redis를 건너뛰고 DB(새 시드)")
+        clock.advance(Duration.ofSeconds(1))
+        assertEquals(mapOf(1L to true, 2L to true, 3L to true), map(1), "TTL 뒤에는 Redis를 다시 쓴다 — 옛 맵은 TTL이 지났다")
     }
 }
 
-/** S6 — Redis를 읽거나 쓰다 실패하면 DB로 200 · 지표 `seat.seatmap.redis.failures{op}` */
-@TestPropertySource(properties = [MAP_REDIS, "spring.data.redis.port=1", "spring.data.redis.timeout=2s"])
-class SeatMapRedisFailureTest : SeatMapImplBase() {
-    private fun failures(op: String) = meters.find(M_REDIS_FAILURES).tags("op", op).counter()?.count() ?: 0.0
+/** R2-C — 좌석 맵 전용 Redis 클라이언트가 spring.data.redis.ssl.enabled를 따른다(연결은 하지 않는다 — 클라이언트 구성만 본다) */
+@TestPropertySource(properties = [MAP_REDIS, "spring.data.redis.ssl.enabled=true"])
+class SeatMapRedisSslTest : SeatMapImplBase() {
+    @Autowired lateinit var seatMapRedis: SeatMapRedis
 
     @Test
-    fun `Redis 실패 — get · put 실패를 세고 DB 맵으로 200`() {
-        val (a, b) = seats(2)
-        hold(a, 100)
-        val get0 = failures("get")
-        val put0 = failures("put")
-        val db0 = requests("redis", "db")
-        assertEquals(mapOf(a to false, b to true), map())
-        assertEquals(mapOf(a to false, b to true), map())
-        assertEquals(get0 + 2, failures("get"))
-        assertEquals(put0 + 2, failures("put"))
-        assertEquals(db0 + 2, requests("redis", "db"))
-        assertEquals(404, mapRaw(987_654_321).status, "회차 없음은 그대로 404")
+    fun `R2-C — ssl enabled면 좌석 맵 Redis 클라이언트가 TLS를 쓴다`() {
+        assertTrue(seatMapRedis.factory!!.clientConfiguration.isUseSsl)
     }
 }

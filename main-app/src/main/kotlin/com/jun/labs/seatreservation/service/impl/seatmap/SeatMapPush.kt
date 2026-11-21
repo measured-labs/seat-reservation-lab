@@ -65,6 +65,8 @@ class SeatMapPush(
         private val frames = ConcurrentLinkedQueue<ByteArray>()
         private val writing = AtomicBoolean()
         private val again = AtomicBoolean()
+        /** 쓴 뒤 아직 flush하지 않았다 — 쓰기 스레드(CAS 깃발 쥔 쪽)만 만진다 */
+        private var unflushed = false
         /** 큐에 남은 프레임이 나가지 못하고 있는 시작 시각(나노 · 0 = 막힘 없음) */
         @Volatile private var stalledSince = 0L
         @Volatile var async: AsyncContext? = null
@@ -109,7 +111,13 @@ class SeatMapPush(
             try {
                 while (frames.isNotEmpty() && o.isReady) {
                     o.write(frames.poll())
-                    if (frames.isEmpty() && o.isReady) o.flush()
+                    unflushed = true
+                }
+                // 프레임을 다 쓴 뒤 내보낸다 — 큰 프레임(첫 맵)을 onWritePossible로 이어 쓴 끝도 여기서 나간다(다음 하트비트를 기다리지 않게).
+                // 쓰기 가능하지 않으면 컨테이너가 다시 onWritePossible을 부르고 그때 내보낸다
+                if (frames.isEmpty() && unflushed && o.isReady) {
+                    unflushed = false
+                    o.flush()
                 }
             } catch (e: Exception) {
                 close(this) // 끊긴 연결 — 정리만(오류 아님)
@@ -151,19 +159,26 @@ class SeatMapPush(
             close(sub)
             throw e
         }
-        response.status = HttpServletResponse.SC_OK
-        response.contentType = "text/event-stream"
-        response.characterEncoding = "UTF-8"
-        response.setHeader("Cache-Control", "no-cache")
-        val async = request.startAsync(request, response)
-        async.timeout = 0 // 시간 제한 없음 — 끊김은 하트비트 쓰기 오류 · 막힘 상한으로 잡는다
-        async.addListener(sub)
-        sub.async = async
-        sub.enqueue(frame("snapshot", snapshot)) // out이 정해지기 전이라 큐에만 들어간다
-        sub.ready = true
-        val out = response.outputStream
-        sub.out = out
-        out.setWriteListener(sub) // 컨테이너가 쓰기 가능해지면 onWritePossible → snapshot부터 나간다
+        // 어느 단계가 던져도(비동기 시작 · 출력 준비 · 쓰기 알림 등록) 구독과 연결 수를 남기지 않는다 — 정리하고 다시 던진다.
+        // ready는 출력까지 준비된 뒤에만 켠다(그 전 구독은 하트비트 · change 대상이 아니다 — 실패하면 여기서 정리된다)
+        try {
+            response.status = HttpServletResponse.SC_OK
+            response.contentType = "text/event-stream"
+            response.characterEncoding = "UTF-8"
+            response.setHeader("Cache-Control", "no-cache")
+            val async = request.startAsync(request, response)
+            sub.async = async
+            async.timeout = 0 // 시간 제한 없음 — 끊김은 하트비트 쓰기 오류 · 막힘 상한으로 잡는다
+            async.addListener(sub)
+            sub.enqueue(frame("snapshot", snapshot)) // out이 정해지기 전이라 큐에만 들어간다
+            val out = response.outputStream
+            sub.out = out
+            out.setWriteListener(sub) // 컨테이너가 쓰기 가능해지면 onWritePossible → snapshot부터 나간다
+            sub.ready = true
+        } catch (e: Exception) {
+            finish(sub)
+            throw e
+        }
         submit { flush(scheduleId) }
     }
 
