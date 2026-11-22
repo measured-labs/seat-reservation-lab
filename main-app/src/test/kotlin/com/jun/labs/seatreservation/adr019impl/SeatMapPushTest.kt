@@ -301,6 +301,26 @@ class SeatMapPushTest : IntegrationTest() {
     }
 
     @Test
+    fun `R3-E — 쓰기 오류는 닫힘 경로로 가서 비동기 컨텍스트까지 완료한다`() {
+        createSeat(1)
+        awaitConnections(0.0, "앞 시험의 연결 정리")
+        val req = org.springframework.mock.web.MockHttpServletRequest("GET", "/x").apply { isAsyncSupported = true }
+        val failing = object : jakarta.servlet.ServletOutputStream() {
+            override fun isReady() = true
+            override fun setWriteListener(listener: jakarta.servlet.WriteListener) = listener.onWritePossible()
+            override fun write(b: Int) = throw java.io.IOException("주입: 쓰기 오류")
+            override fun write(b: ByteArray, off: Int, len: Int) = throw java.io.IOException("주입: 쓰기 오류")
+        }
+        val res = object : org.springframework.mock.web.MockHttpServletResponse() {
+            override fun getOutputStream(): jakarta.servlet.ServletOutputStream = failing
+        }
+        push.open(s, req, res)
+        assertTrue(!req.isAsyncStarted, "비동기 컨텍스트가 완료됐다")
+        assertEquals(0.0, connections())
+        assertTrue(s !in subscriptionKeys(), "구독이 남지 않는다")
+    }
+
+    @Test
     fun `R2-F — open 중 비동기 시작 · 출력 준비가 실패하면 구독과 연결 수가 남지 않는다`() {
         createSeat(1)
         awaitConnections(0.0, "앞 시험의 연결 정리")
