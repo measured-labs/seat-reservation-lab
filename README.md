@@ -74,7 +74,7 @@
 | [016](docs/adr/ADR-016-paid-seat-loss.md) | 결제하고도 좌석을 잃는 사용자는 | 결제 시작 시 홀드 연장 + 결제 마감 시각 | 좌석을 잃은 사용자 11.09% -> 0, 결제 전 거부와 결제 실패 합계 0.36% |
 | [017](docs/adr/ADR-017-confirm-failure-compensation.md) | 그래도 확정에 실패하면 | 즉시 환불 | 27회 모두 유효. 승인 후 매입 방식은 확정 p99가 1.22배라 탈락 |
 | [018](docs/adr/ADR-018-adjacent-seats.md) | 2연석 중 일부만 선점되면 | 묶음 홀드 API 기본 적용(split) | 48회 모두 유효. 같은 순간 경합에서 아무도 못 잡은 묶음이 one-shot 23.5%, split 0 |
-| [019](docs/adr/ADR-019-seat-map-query.md) | 좌석 맵 조회와 실제 상태가 다르면 | 예정 (가설 단계) | 해당 없음 |
+| [019](docs/adr/ADR-019-seat-map-query.md) | 좌석 맵 조회와 실제 상태가 다르면 | 설계 (조회 방식 5가지 구현, 측정 전) | 캐시가 없어도 헛선점 37~50%(로컬 재현, 고르는 시간 0~2초) |
 | [020](docs/adr/ADR-020-seat-map-mismatch-handling.md) | 좌석 맵과 실제가 달랐을 때 사용자에게 어떻게 알리나 | 예정 (가설 단계) | 해당 없음 |
 | [021](docs/adr/ADR-021-open-spike.md) | 오픈 순간 요청이 몰리면 | 예정 (가설 단계) | 해당 없음 |
 | [022](docs/adr/ADR-022-kafka-replica-reconcile.md) | 불일치 탐지를 읽기 복제본으로 옮기면 | 보류 | 쓰기량이 더 늘어나는 조건을 측정한 뒤 시작한다 |

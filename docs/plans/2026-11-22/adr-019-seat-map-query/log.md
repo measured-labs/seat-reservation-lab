@@ -29,6 +29,10 @@
 | 11-22 10:4x | 리뷰 루프 3 회수: codex high 지적 4 + OQ 1 ∥ Opus(낮음 1 + OQ 2) → R3-A~E · codex F1 기각(꺼낼 때 `it.stamp == before` 비교 — SeatMapView local 3행 · 옛 적재는 미스 1회일 뿐 — 메인이 코드로 확인) · codex F2 기각(S3 "TTL + 조회 시간" 허용 · 상한 redis-timeout 200ms) · codex F3 후보(S9 다중 인스턴스 범위 밖 · ADR 설계-4 한계) · codex F4 + opus OQ1 = R2-G와 같은 지적 세 번째 → 후보 유지(실측 Tomcat 1초 안 완료) · opus F1 새 지적 → 재현 워커 3(10e290fae) | 재현 중 |
 | 11-22 11:0x | 재현 3 회수(Opus · 99,920 토큰 · 10e290fae): R3-A 재현(12/12) → 루프 3(상한) 신규 채택 1 → 종료 조건 불충족(review unresolved) · 같은 유형 네 번째 → §6 구조 제안 · 사용자 결정 "구조 수정 + 재점검 1회로 마감"(user override — `decisions.md`) · R3-E(후보)는 구조 수정에 함께 듦 → 구현 워커 재개 | 구조 수정 중 |
 | 11-22 14:4x | 구조 수정 회수(구현 워커 · 누적 512,595 토큰): SeatMapPush.kt 한 파일 — 상태 OPENING → READY → CLOSED(AtomicReference · 한 방향) · 닫힘 경로 close(sub) 한 곳(목록 제거 · 빈 키 삭제 · 연결 수 1회 · completeOnce) · attach가 붙인 직후 상태 재확인(닫혔으면 완료) · finish 제거(쓰기 오류 · onError · onTimeout도 close) · 회귀: R3-A 4클래스(closeAll · reset × none · event) · 초기화 → 준비된 연결 2개 EOF · R3-E 쓰기 오류 → 완료 — 수정 전(SeatMapPush.kt만 c54e933e8로 되돌림) R3-A 4 · R3-E 실패 → 복원(cmp) 뒤 통과 · 전체 main-app 1512 · 통과 1488 · 실패 0 · 스킵 24 · code 커밋(아래) → post-fix 재점검(codex · 1회 · 고친 hunk + 인접 + 새 시험) | 재점검 중 |
+| 11-22 15:0x | post-fix 재점검 회수(codex high · 미러 fa60e7d1d · 대상 10e290fae..1c95828bf + 인접 + 새 시험): 지적 2 → PF-1 잠재(startAsync 뒤 attach 전 예외 → 완료 누락 · 실행 재현을 수정 전 시험으로) · PF-2 테스트 공백(readUntilEof가 IOException도 EOF) → 둘 다 채택 · 사용자 결정대로 추가 리뷰 없이 수정으로 마감 → 구현 워커(실패 시험 먼저) | 마감 수정 중 |
+| 11-22 15:3x | 마감 수정 회수(구현 워커 · 누적 534,607 토큰): PF-1 SeatMapPush.kt:202-203 startAsync 직후 attach → 이후 실패도 close가 1회 완료 · PF-2 Adr019ImplSupport.readUntilEof `read()==-1`만 EOF(IOException 따로) · 경합 시험에 complete 정확히 1 · 연결 수 0 · 목록 제거 단언(4클래스) · 수정 전 실패 확인(P1 `expected <1> but was <0>` · P2 옛 분기 `Eof(text=)`) · RST 방식은 이 커널에서 read -1이라 비결정 → IOException 던지는 소켓으로 바꿈 · 전체 main-app 1518 · 통과 1494 · 실패 0 · 스킵 24 · code 커밋(아래) · 추가 리뷰 없음(사용자 결정) | 리뷰 마감(user override) |
+| 11-22 15:4x | worktree 정리(이 작업의 워커 4개 · 브랜치 4 — 남은 것은 커밋 안 한 재현 · blind 시험 사본뿐 · `agent-a1681…`은 10-23 빈 디렉터리라 둠) · 기동 스모크 재실행(cc60cf3d8 bootJar — eb97224a6 뒤 Redis · 푸시 코드가 바뀜): 결과 08:3x와 같음(필드 5 · none/event 바로 false · ttl/redis TTL 뒤 false · SSE snapshot → change `[{"seatId":7,"available":false}]` · event + lazy 거부) · README ADR-019 행 · NEXT N00f · 측정 로그 1행 | 마감 |
+| 11-22 15:5x | **정정(사후 — 기록만 바로잡음)**: 이 log의 05:1x 이후 행 시각 칸 일부는 메인이 대략 적은 값이다 — 정확한 시각은 decisions.md(예: 갱신 신호 04:3x 결정 · 리뷰 상한 결정 13:50:41)와 각 워커 보고의 실행 시각이 정본. 워커 토큰(완료 알림 usage): blind 224,902 · 구현 누적 537,867(마지막 알림) · 리뷰 Opus 193,212 · 202,497 · 172,316 · 재현 164,534 · 133,925 · 99,920 · 완료 요약 136,528 · codex는 토큰 표시 없음 | 기록 정정 |
 
 ### S4 점검표 — 쓰기 경로 ↔ 무효화 호출 (구현 워커 보고 · 747073b81)
 
@@ -53,11 +57,11 @@
 
 | id | loop | source | 근거 | repro | impact | disposition | status |
 |----|------|--------|------|-------|--------|-------------|--------|
-| DV-1 | 선검증 | codex | SeatMapQuery.kt:14 · ADR-019 설계-3 | 해당 없음 — 설계 문서(계약 테스트: 조회 반환 ↔ 캐시 적재 사이 장벽 + 선점 커밋) | 데이터 | 채택 — 회차별 세대 번호: 조회 전 세대를 읽고 같을 때만 적재 | open |
-| DV-2 | 선검증 | codex | SubstituteAllocator.kt:49-70 · ADR-019 설계-1 | 해당 없음 — 설계 문서(계약 테스트: substitute 대체 배정 뒤 두 좌석) | 데이터 | 채택 — 방향 무관 모든 상태 쓰기 무효화 · 설계-1 문장 고침 | open |
-| DV-3 | 선검증 | codex | LoadtestDataService.kt:43-95 | 해당 없음 — 설계 문서(계약 테스트: 회차 2 캐시 → reset schedules=1 → 404) | 데이터 | 채택 — 초기화 커밋 뒤 전체 캐시 비움 | open |
-| DV-4 | 선검증 | codex | ADR-019 설계-2 · SeatMapQuery.kt:31-38 | 해당 없음 — 설계 문서(계약 테스트: 첫 조회 ↔ 구독 등록 사이 선점) | 계약 | 채택 — 구독 먼저(버퍼) → 첫 맵 → 버퍼 비움 · 변경은 좌석 id로 알리고 보낼 때 현재 보이는 상태를 다시 읽음 · 끊김 시 구독 · 버퍼 함께 정리 | open |
-| DV-5 | 선검증 | codex | Adr014ModeContractBase.kt:509-516 · :154-158 | 코드로만 확인 — 테스트 공백(두 상태로 바꾸면 HELD/RESERVED 구별 소실) | 검증 | 채택 — 맵 단언은 false · 확정 뒤 RESERVED는 DB로 따로 단언 · 필드 집합 검사 고침 | open |
+| DV-1 | 선검증 | codex | SeatMapQuery.kt:14 · ADR-019 설계-3 | 해당 없음 — 설계 문서(계약 테스트: 조회 반환 ↔ 캐시 적재 사이 장벽 + 선점 커밋) | 데이터 | 채택 — 회차별 세대 번호: 조회 전 세대를 읽고 같을 때만 적재 | fixed(설계) |
+| DV-2 | 선검증 | codex | SubstituteAllocator.kt:49-70 · ADR-019 설계-1 | 해당 없음 — 설계 문서(계약 테스트: substitute 대체 배정 뒤 두 좌석) | 데이터 | 채택 — 방향 무관 모든 상태 쓰기 무효화 · 설계-1 문장 고침 | fixed(설계) |
+| DV-3 | 선검증 | codex | LoadtestDataService.kt:43-95 | 해당 없음 — 설계 문서(계약 테스트: 회차 2 캐시 → reset schedules=1 → 404) | 데이터 | 채택 — 초기화 커밋 뒤 전체 캐시 비움 | fixed(설계) |
+| DV-4 | 선검증 | codex | ADR-019 설계-2 · SeatMapQuery.kt:31-38 | 해당 없음 — 설계 문서(계약 테스트: 첫 조회 ↔ 구독 등록 사이 선점) | 계약 | 채택 — 구독 먼저(버퍼) → 첫 맵 → 버퍼 비움 · 변경은 좌석 id로 알리고 보낼 때 현재 보이는 상태를 다시 읽음 · 끊김 시 구독 · 버퍼 함께 정리 | fixed(설계) |
+| DV-5 | 선검증 | codex | Adr014ModeContractBase.kt:509-516 · :154-158 | 코드로만 확인 — 테스트 공백(두 상태로 바꾸면 HELD/RESERVED 구별 소실) | 검증 | 채택 — 맵 단언은 false · 확정 뒤 RESERVED는 DB로 따로 단언 · 필드 집합 검사 고침 | fixed(설계) |
 | DV-OQ1 | 선검증 | codex | 명세 S9 ↔ S7 | 해당 없음 — 설계 문서 | 계약 | open question → 메인: S9(다중 인스턴스 무효화 범위 밖)를 SSE에도 적용 — 다른 인스턴스의 변경은 전파하지 않음(ADR 설계-4에 명시) | 정리 |
 | DV-OQ2 | 선검증 | codex | 명세 S6 · HoldStrategyStartupCheck.kt:158 | 해당 없음 — 설계 문서 | 계약 | open question → 메인: '연결하지 않는다'는 좌석 맵 기능 한정(기존 Redis 선점 전략은 그대로) — 명세 S6 문장 보충 | 정리 |
 | R1-A | 1 | codex F1 · opus F5 | SeatMapView.kt:114-123 | 실행 — 747073b81 · ReproARedisBadEntryTest · DateTimeParseException 전파 · failures 증가 없음 | 가용성 | 채택 — (3) 이번 변경 · (4) S6 | fixed(1) |
@@ -85,7 +89,70 @@
 | R3-C | 3 | codex F2 | SeatMapView.kt:127 · :136 | 해당 없음 — 기각 | 해당 없음 | 기각 — S3가 TTL + 조회 시간을 허용 · Redis 읽기 시간 상한 = redis-timeout | 정리 |
 | R3-D | 3 | codex F3 · codex OQ | SeatMapView.kt:93-99 | 해당 없음 — 후보 | 검증 | 후보 — 다중 인스턴스 무효화는 S9 범위 밖 · ADR 설계-4에 한계 기록 | 후보 |
 | R3-E | 3 | codex F4 · opus OQ1 | SeatMapPush.kt:122 · :141 | 잠재 — R2-G 실측(Tomcat 10.1.44가 1초 안 완료) | 가용성 | 채택 — 구조 수정(R3-A)에 함께 듦(사용자 결정) | fixed(3) |
+| PF-1 | 재점검 | codex | SeatMapPush.kt:201 · :98 · :210 | 실행 — 1c95828bf · SeatMapPushTest P1(가짜 AsyncContext · addListener · setTimeout이 던짐) · `complete() 정확히 1번 expected <1> but was <0>` | 가용성 | 채택 — (3) 이번 변경 · (4) S7 | fixed(마감) |
+| PF-2 | 재점검 | codex | SeatMapPushCloseDuringOpenTest.kt:92 · :104 · :145 · SeatMapPushTest.kt:317 | 코드로만 확인 — 테스트 공백(IOException을 EOF로 통과) · 헬퍼 시험이 옛 분기에서 `Eof(text=)`로 실패 확인 | 검증 | 채택 — (4) S7 시험 계약 | fixed(마감) |
 
 ## 생략한 검증
 
-## 완료 요약
+## 완료 요약 (2026-11-22)
+
+- 범위: 명세 §1 ①~⑤ — ① 헛선점 재현 스모크(log 04:2x · 저장소 코드 아님) ② 응답 `available`(SeatMapView의 SeatMapSeat · k6 s14-flow.js 1줄) ③ `seat.seat-map.mode`(none 기본 · ttl · redis · event · SeatMapProperties · SeatMapView 세대 번호 · Redis 초기화 세대 · SeatMapRedis 전용 연결 `seat.seat-map.redis-timeout` 200ms · SeatMapChanges 커밋 뒤 신호 — 쓰기 경로 13파일 · 기동 검사 event/푸시 = sweep 전용) ④ SSE `GET /api/schedules/{id}/seats/stream`(기본 끔 · 비차단 출력 · 구독 상태 기계) ⑤ 지표 requests · age · redis.failures(get · put · clear) · push.connections · signal.failures · 문서: 번호 이동 11차 · 새 ADR-020(가설) · ADR-019 설계-1~4.
+- 변경: 커밋 11(code 5: 747073b81 · 649364dc4 · c54e933e8 · 1c95828bf · cc60cf3d8 / docs 6: 4a513f36e · 16a6927bb · 4166953b4 · eb97224a6 · 10e290fae · fa60e7d1d) · main 25파일 +886/−10 · 시험 27파일 +2790/−13(blind adr019/ 11 · adr019impl/ · 기존 시험 조정 4) · k6 1 · docs 18.
+- 핵심 diff(실파일 `git show` 추출):
+
+① 응답 — before `831f65edb` SeatMapQuery.kt · SeatMapController.kt
+```kotlin
+data class SeatMapEntry(val seatId: Long, val section: String, val rowNo: Int, val seatNo: Int, val status: SeatStatus)
+…
+    @GetMapping("/api/schedules/{scheduleId}/seats")
+    fun seats(@PathVariable scheduleId: Long): List<SeatMapEntry> = seatMap.seats(scheduleId)
+```
+after `cc60cf3d8` SeatMapView.kt · SeatMapController.kt
+```kotlin
+data class SeatMapSeat(val seatId: Long, val section: String, val rowNo: Int, val seatNo: Int, val available: Boolean)
+…
+    @GetMapping("/api/schedules/{scheduleId}/seats")
+    fun seats(@PathVariable scheduleId: Long): List<SeatMapSeat> = seatMap.seats(scheduleId)
+```
+② 커밋 뒤 신호 — `cc60cf3d8` SeatMapChanges.kt
+```kotlin
+    private fun afterCommit(block: () -> Unit) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) return guarded(block)
+        TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+            override fun getOrder() = Ordered.HIGHEST_PRECEDENCE
+            override fun afterCommit() = guarded(block)
+        })
+    }
+```
+③ 세대 번호 — `cc60cf3d8` SeatMapView.kt
+```kotlin
+    private fun local(scheduleId: Long): List<SeatMapSeat> {
+        val before = stamp(scheduleId)
+        val now = clock.instant()
+        local[scheduleId]?.takeIf { it.stamp == before && fresh(it.readAt, now) }?.let { return respond(it.seats, it.readAt, fromCache) }
+        val readAt = clock.instant()
+        val seats = readDb(scheduleId)
+        SeatMapTestHooks.afterDbRead?.invoke(scheduleId)
+        if (stamp(scheduleId) == before) local[scheduleId] = Cached(seats, readAt, before)
+        return respond(seats, readAt, fromDb)
+    }
+```
+④ 푸시 상태 기계 — `cc60cf3d8` SeatMapPush.kt
+```kotlin
+    private enum class State { OPENING, READY, CLOSED }
+…
+    private fun close(sub: Subscription) {
+        if (sub.toClosed()) {
+            bySchedule.computeIfPresent(sub.scheduleId) { _, subs -> subs.remove(sub); if (subs.isEmpty()) null else subs }
+            open.decrementAndGet()
+            sub.discard()
+        }
+        sub.completeOnce()
+    }
+```
+- 검증: 재현 스모크 409 비율 37% · 41% · 50%(생각 0 · 0~500ms · 0~2초 · 위반 0) · 가정 2 일부 깨짐 → 사용자 분기(앱 쓰기 지점 + 감시 테스트) · 설계 선검증 DV-1~5 · blind 40/40(구현 없이 None · Event 15 중 12 실패) · 변이 확인(세대 검사 · 첫 맵 버림 · 신호 없는 UPDATE · 루프마다 수정 전 코드 실패) · 전체 `./gradlew test`(747073b81) main-app 1491/1467/0/24 · mock-pg 24/0 · reconciler 6/0 → main-app 마지막 1518/1494/0/24(cc60cf3d8) · 기동 스모크 eb97224a6 · **cc60cf3d8(마감 재실행)** 통과.
+- 리뷰: 듀얼 3루프(리뷰한 SHA 747073b81 · eb97224a6 · 10e290fae) + 구조 수정(1c95828bf) + post-fix 재점검(codex · 10e290fae..1c95828bf) · 루프마다 별도 재현 워커가 리뷰한 SHA에서 재현 뒤 채택 · ledger: 채택 24(DV 5 · R1 8 · R2 7 · R3 2 · PF 2) · 후보 3(R1-C · R2-G · R3-D) · 기각 4(R2-D · R2-H1 · R3-B · R3-C) · OQ 정리 3(ledger 행의 disposition 첫 낱말을 셈 — 요약 워커 awk).
+- 리뷰 상태: 루프 3(상한)에서 신규 채택 R3-A(12/12 재현) → 종료 조건 불충족(review unresolved) · 같은 유형 네 번째(SSE 수명 주기) → 사용자 결정 "구조 수정 + 재점검 1회로 마감"(user override · decisions.md 13:50:41) · 재점검 지적 PF-1 · PF-2는 수정으로 마감 · cc60cf3d8 뒤 리뷰 없음 — 병합 판단은 사용자.
+- 남은 것: 후보 R1-C(앱 메모리 캐시 축출) · R2-G(끊김 뒤 완료 주체 — 구조 수정이 쓰기 오류 → 완료를 넣음) · R3-D(다중 인스턴스 세대 실패) · 2단계 측정 명세 입력(R1-OQ — NEXT N00f).
+- 생략한 검증: mock-pg · reconciler-app 시험은 747073b81 뒤 다시 돌리지 않음(그 뒤 code 커밋은 main-app만 바꿈 — `git diff --name-only 747073b81 cc60cf3d8` 확인).
+- CS 이슈 아카이브: 보류 — study-note 저장소 쓰기는 이 세션의 사용자 금지 영역(issue-archive §1 보류 경로) · 후보 이슈: 비동기 서블릿 I/O 수명 주기(여는 중 닫힘 · 완료 누락) · 캐시 무효화 ↔ 적재 경합(세대 번호).
