@@ -301,6 +301,19 @@ class SeatMapPushTest : IntegrationTest() {
     }
 
     @Test
+    fun `P1 — startAsync 뒤 attach 전 단계(addListener · timeout 설정)가 실패해도 그 컨텍스트는 정확히 한 번 완료된다`() {
+        createSeat(1)
+        awaitConnections(0.0, "앞 시험의 연결 정리")
+        for (step in listOf("addListener", "setTimeout")) {
+            val async = CountingAsyncContext(failOn = step)
+            assertTrue(runCatching { push.open(s, async.request(), org.springframework.mock.web.MockHttpServletResponse()) }.isFailure, "$step 실패는 다시 던진다")
+            assertEquals(1, async.completes.get(), "$step — complete() 정확히 1번")
+            assertEquals(0.0, connections(), step)
+            assertTrue(s !in subscriptionKeys(), "$step — 구독이 남지 않는다")
+        }
+    }
+
+    @Test
     fun `R3-E — 쓰기 오류는 닫힘 경로로 가서 비동기 컨텍스트까지 완료한다`() {
         createSeat(1)
         awaitConnections(0.0, "앞 시험의 연결 정리")

@@ -107,3 +107,56 @@ abstract class SeatMapImplBase : IntegrationTest() {
         }
     }
 }
+
+/** 소켓 읽기 결과 — 서버가 응답을 끝내 read()가 -1을 돌려줬는가(EOF) · 그 전에 I/O 오류가 났는가 · 시간 안에 둘 다 아니었는가 */
+sealed interface SocketEnd {
+    data class Eof(val text: String) : SocketEnd
+    data class Error(val error: java.io.IOException, val text: String) : SocketEnd
+    data object Timeout : SocketEnd
+}
+
+/** [seconds] 안에 소켓이 어떻게 끝나는지 읽는다(soTimeout이 짧아야 한다) */
+fun readUntilEof(socket: java.net.Socket, seconds: Long): SocketEnd {
+    val until = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(seconds)
+    val text = StringBuilder()
+    val buf = ByteArray(8192)
+    while (System.nanoTime() < until) {
+        try {
+            val n = socket.getInputStream().read(buf)
+            if (n < 0) return SocketEnd.Eof(text.toString())
+            text.append(String(buf, 0, n, Charsets.UTF_8))
+        } catch (e: java.net.SocketTimeoutException) {
+            // 계속 기다린다
+        } catch (e: java.io.IOException) {
+            return SocketEnd.Error(e, text.toString()) // I/O 오류(연결 재설정 등) — 응답 끝이 아니다
+        }
+    }
+    return SocketEnd.Timeout
+}
+
+fun assertEof(end: SocketEnd, why: String) = assertTrue(end is SocketEnd.Eof, "$why — 결과: $end")
+
+/** complete() 횟수를 세는 가짜 AsyncContext — [failOn] 메서드는 던진다(예: "addListener" · "setTimeout") */
+class CountingAsyncContext(private val failOn: String? = null) {
+    val completes = java.util.concurrent.atomic.AtomicInteger()
+    val context: jakarta.servlet.AsyncContext = java.lang.reflect.Proxy.newProxyInstance(
+        javaClass.classLoader, arrayOf(jakarta.servlet.AsyncContext::class.java),
+    ) { proxy, m, args ->
+        when (m.name) {
+            failOn -> throw IllegalStateException("주입: ${m.name} 실패")
+            "complete" -> { completes.incrementAndGet(); null }
+            "getTimeout" -> 0L
+            "hasOriginalRequestAndResponse" -> true
+            "hashCode" -> System.identityHashCode(proxy)
+            "equals" -> proxy === args?.get(0)
+            "toString" -> "CountingAsyncContext"
+            else -> null
+        }
+    } as jakarta.servlet.AsyncContext
+
+    /** startAsync가 이 컨텍스트를 돌려주는 요청 */
+    fun request(): org.springframework.mock.web.MockHttpServletRequest = object : org.springframework.mock.web.MockHttpServletRequest("GET", "/x") {
+        override fun startAsync(request: jakarta.servlet.ServletRequest, response: jakarta.servlet.ServletResponse?): jakarta.servlet.AsyncContext = context
+        override fun startAsync(): jakarta.servlet.AsyncContext = context
+    }.apply { isAsyncSupported = true }
+}

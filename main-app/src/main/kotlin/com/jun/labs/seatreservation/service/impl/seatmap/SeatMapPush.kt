@@ -198,10 +198,11 @@ class SeatMapPush(
             response.contentType = "text/event-stream"
             response.characterEncoding = "UTF-8"
             response.setHeader("Cache-Control", "no-cache")
+            // 얻는 즉시 붙인다 — 그 뒤 어느 단계가 실패하든(시간 제한 설정 · 리스너 등록 포함) 닫힘 경로가 이 컨텍스트를 정확히 한 번 완료한다
             val async = request.startAsync(request, response)
+            if (!sub.attach(async)) return // 여는 중에 닫혔다 — attach가 완료했다(EOF)
             async.timeout = 0 // 시간 제한 없음 — 끊김은 하트비트 쓰기 오류 · 막힘 상한으로 잡는다
             async.addListener(sub)
-            if (!sub.attach(async)) return // 여는 중에 닫혔다 — 응답은 끝났다(EOF)
             sub.enqueue(frame("snapshot", snapshot)) // out이 붙기 전이라 큐에만 들어간다
             val out = response.outputStream
             sub.out = out
