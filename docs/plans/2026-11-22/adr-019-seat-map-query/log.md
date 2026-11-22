@@ -25,6 +25,10 @@
 | 11-22 08:5x | 리뷰 루프 2 회수: codex high 지적 4 + OQ 1(헛선점 스모크 증거 — log 04:2x에 있음, packet이 log를 빼서 못 봄 → 답함) ∥ Opus(202,497 토큰) 지적 3(낮음) + OQ 4 → 묶음 R2-A~H · 메인 1차 분류(아래 ledger) → 재현 검증 워커 2(Opus · worktree · eb97224a6) 착수 | 재현 중 |
 | 11-22 09:1x | 재현 2 회수(Opus · 133,925 토큰 · worktree eb97224a6): R2-A · R2-B · R2-F 재현 · R2-G 잠재(Tomcat이 1초 안 완료) · OQ1 문제 없음 · OQ2 snapshot 꼬리 하트비트에 묶임(재현) · OQ3 기동 실패(안내 없음) → 채택 7(A · B · C · E · F · H2 · H3) · 후보 1(G) · 기각 2(D · H1) → 구현 워커 재개(루프 2 수정) | 수정 중 |
 | 11-22 10:0x | 루프 2 수정 회수(구현 워커 · 누적 479,973 토큰): R2-A Redis 값에 세대 · 꺼낼 때 비교 · MGET · R2-B 초기화 = 세대 INCR(SCAN 삭제 없앰) · 실패 시 이 인스턴스 TTL 동안 Redis 건너뜀 · R2-C useSsl · R2-E 시험만(SeatMapEventCurrentModeTest — 처음부터 통과 = 빠진 검증 채움) · R2-F open 전체 try + 정리 · ready는 출력 준비 뒤 · OQ2 프레임 끝 flush(1만 석 snapshot 5회 모두 300ms 안) · OQ3 redis 모드 0 이하 거부 · 수정 전 실패 확인 = 부분 되돌림 변이(새 API로 옛 코드 컴파일 불가) — R2-F 변이 실패는 OQ2 변이 잔여 연결과 섞여 단독 판별 못 함(기록) · 동작 변화: Redis 읽기 실패 시 put 생략(SeatMapRedisFailureTest put 단언 조정) · 전체 main-app 1506 · 통과 1482 · 실패 0 · 스킵 24 · 메인: 한계 2(다른 인스턴스 세대 실패 · ssl bundle)를 ADR 설계-4에 적음 · test-contract Redis 키 · 커밋(아래) | 리뷰 3 준비 |
+| 11-22 10:1x | 리뷰 루프 3(상한) packet(OUT=/tmp/claude-1000/-home-jun-project-lab-backend-labs-commerce/0961cd42-5c49-4146-8c52-81561cdbcc92/scratchpad/adr019/rv3 · base 4166953b4 · **리뷰한 SHA 10e290fae**(code c54e933e8 + docs) · 직전 루프 수정 diff eb97224a6..c54e933e8 참고 · 미러 루프 2와 같은 범위 · 보안 스캔 재스캔 0) → codex high ∥ Opus 리뷰어 | 리뷰 3 실행 중 |
+| 11-22 10:4x | 리뷰 루프 3 회수: codex high 지적 4 + OQ 1 ∥ Opus(낮음 1 + OQ 2) → R3-A~E · codex F1 기각(꺼낼 때 `it.stamp == before` 비교 — SeatMapView local 3행 · 옛 적재는 미스 1회일 뿐 — 메인이 코드로 확인) · codex F2 기각(S3 "TTL + 조회 시간" 허용 · 상한 redis-timeout 200ms) · codex F3 후보(S9 다중 인스턴스 범위 밖 · ADR 설계-4 한계) · codex F4 + opus OQ1 = R2-G와 같은 지적 세 번째 → 후보 유지(실측 Tomcat 1초 안 완료) · opus F1 새 지적 → 재현 워커 3(10e290fae) | 재현 중 |
+| 11-22 11:0x | 재현 3 회수(Opus · 99,920 토큰 · 10e290fae): R3-A 재현(12/12) → 루프 3(상한) 신규 채택 1 → 종료 조건 불충족(review unresolved) · 같은 유형 네 번째 → §6 구조 제안 · 사용자 결정 "구조 수정 + 재점검 1회로 마감"(user override — `decisions.md`) · R3-E(후보)는 구조 수정에 함께 듦 → 구현 워커 재개 | 구조 수정 중 |
+| 11-22 14:4x | 구조 수정 회수(구현 워커 · 누적 512,595 토큰): SeatMapPush.kt 한 파일 — 상태 OPENING → READY → CLOSED(AtomicReference · 한 방향) · 닫힘 경로 close(sub) 한 곳(목록 제거 · 빈 키 삭제 · 연결 수 1회 · completeOnce) · attach가 붙인 직후 상태 재확인(닫혔으면 완료) · finish 제거(쓰기 오류 · onError · onTimeout도 close) · 회귀: R3-A 4클래스(closeAll · reset × none · event) · 초기화 → 준비된 연결 2개 EOF · R3-E 쓰기 오류 → 완료 — 수정 전(SeatMapPush.kt만 c54e933e8로 되돌림) R3-A 4 · R3-E 실패 → 복원(cmp) 뒤 통과 · 전체 main-app 1512 · 통과 1488 · 실패 0 · 스킵 24 · code 커밋(아래) → post-fix 재점검(codex · 1회 · 고친 hunk + 인접 + 새 시험) | 재점검 중 |
 
 ### S4 점검표 — 쓰기 경로 ↔ 무효화 호출 (구현 워커 보고 · 747073b81)
 
@@ -76,6 +80,11 @@
 | R2-H1 | 2 | opus OQ1 | SeatMapPush.kt:165-166 | 실행 — eb97224a6 · PushRealPortReproTest OQ1 · listener 없이 isReady = false(예외 없음) | 해당 없음 | 기각 — 실측으로 문제 없음 | 정리 |
 | R2-H2 | 2 | opus OQ2 | SeatMapPush.kt:112 | 실행 — eb97224a6 · OQ2b · 1만 석 snapshot(701.7KB) 끝 바이트가 하트비트 flush에 묶임 995 · 236 · 187 · 887 · 1004ms(5/5 끝 바이트와 하트비트 같은 읽기) · change는 묶이지 않음 | 계약 | 채택 — (3) 이번 변경(비차단 쓰기 끝의 flush 빠짐) · (4) §1 ⑤ 측정 가능한 후보(2단계 SSE 지연에 섞임) | fixed(2) |
 | R2-H3 | 2 | opus OQ3 | SeatMapRedis.kt · SeatMapStartupCheck.kt | 실행 — eb97224a6 · RedisZeroTimeoutReproTest · `redis-timeout=0s` → Lettuce `Connect timeout must be greater 0`로 기동 실패 · 앱 안내 없음 | 계약 | 채택 — (3) 새 키 · (4) 설정 거부 안내(ttl 검사와 같게) | fixed(2) |
+| R3-A | 3 | opus F1 · OQ2 | SeatMapPush.kt:154 · :169-177 · :193-195 · :141-144 | 실행 — 10e290fae · R3aCloseAllDuringOpenTest 4클래스(직접 closeAll · reset × none · event) · 닫기 낀 12/12: 15초 동안 바이트 0 · EOF 없음 · 지표 0 · 종료 시 활성 요청 남음 4/4 · 대조군 12/12 정상 | 가용성 | 채택 — (3) 이번 변경 · (4) S7 · S4′ · 같은 유형 네 번째(R1-D · R1-F · R2-F · R3-A — SSE 연결 수명 주기 정리) → §6 구조: 구독 상태 기계 · 닫힘이면 async가 생기는 순간 완료(R3-E 함께) · 초기화 → 푸시 닫힘(EOF)을 계약에 | fixed(3) |
+| R3-B | 3 | codex F1 | SeatMapView.kt:115 · :81 | 코드로만 확인 — 기각 근거(꺼낼 때 세대 비교) | 해당 없음 | 기각 — 옛 적재 항목은 stamp가 옛 세대라 다음 조회에서 버려짐(미스 1회) | 정리 |
+| R3-C | 3 | codex F2 | SeatMapView.kt:127 · :136 | 해당 없음 — 기각 | 해당 없음 | 기각 — S3가 TTL + 조회 시간을 허용 · Redis 읽기 시간 상한 = redis-timeout | 정리 |
+| R3-D | 3 | codex F3 · codex OQ | SeatMapView.kt:93-99 | 해당 없음 — 후보 | 검증 | 후보 — 다중 인스턴스 무효화는 S9 범위 밖 · ADR 설계-4에 한계 기록 | 후보 |
+| R3-E | 3 | codex F4 · opus OQ1 | SeatMapPush.kt:122 · :141 | 잠재 — R2-G 실측(Tomcat 10.1.44가 1초 안 완료) | 가용성 | 채택 — 구조 수정(R3-A)에 함께 듦(사용자 결정) | fixed(3) |
 
 ## 생략한 검증
 

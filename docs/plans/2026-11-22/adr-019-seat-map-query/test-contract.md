@@ -51,7 +51,7 @@
 - 해제 `DELETE /api/holds/{id}` · `DELETE /api/hold-groups/{id}`
 - 만료 배치(시계를 옮긴 뒤 만료 배치를 직접 부르는 기존 방식 — `ExpireHoldsUseCase.expire()`)
 - 대체 배정(`seat.compensation.mode=substitute` — 기존 adr017 시험 지원 코드 방식): 원래 좌석과 새 좌석 둘 다
-- loadtest 초기화 `POST /internal/reset`(loadtest 프로필): 지워진 회차는 404, 다시 만든 회차는 새 시드대로
+- loadtest 초기화 `POST /internal/reset`(loadtest 프로필): 지워진 회차는 404, 다시 만든 회차는 새 시드대로. 열린 푸시 연결은 모두 닫힌다(클라이언트가 응답 끝(EOF)을 받고, 여는 중이던 연결도 끝난다 — 리뷰 루프 3 R3-A로 더함). 클라이언트는 다시 연결한다.
 
 ## 6. 파일 경계
 
