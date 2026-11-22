@@ -10,6 +10,7 @@ import com.jun.labs.seatreservation.service.impl.drift.MemoryChangedPairs
 import com.jun.labs.seatreservation.service.impl.limit.upsertQuota
 import com.jun.labs.seatreservation.service.impl.limit.upsertSqlFor
 import com.jun.labs.seatreservation.service.impl.payment.PaymentIntents.State
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import java.sql.Timestamp
@@ -29,6 +30,7 @@ class SubstituteAllocator(
     private val salesClose: SalesCloseGate,
     private val holdProperties: SeatHoldProperties,
     private val changes: MemoryChangedPairs,
+    private val seatMap: SeatMapChanges,
 ) {
     class Unavailable(reason: String) : RuntimeException(reason)
 
@@ -80,6 +82,7 @@ class SubstituteAllocator(
             State.SUBSTITUTED.name, code.name, reservationId, intent.uid,
         )
         changes.changed(intent.scheduleId, intent.userId)
+        seatMap.publish(intent.scheduleId, listOfNotNull(original, seatId)) // ADR-019 — 원래 좌석(→ AVAILABLE) · 새 좌석(AVAILABLE → RESERVED) · 커밋 뒤
         return Allocated(reservationId, seatId)
     }
 }

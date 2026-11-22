@@ -8,6 +8,7 @@ import com.jun.labs.seatreservation.service.HoldSeatCommand
 import com.jun.labs.seatreservation.service.HoldSeatResult
 import com.jun.labs.seatreservation.service.SeatHoldProperties
 import com.jun.labs.seatreservation.service.impl.limit.ActiveUserLimit
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import io.micrometer.core.instrument.MeterRegistry
 import org.springframework.stereotype.Component
 import org.springframework.transaction.annotation.Propagation
@@ -27,6 +28,8 @@ class HoldSeatProcess(
     private val properties: SeatHoldProperties,
     private val clock: Clock,
     private val salesClose: SalesCloseGate,
+    /** ADR-019 좌석 맵 변경 신호 — 직접 생성(테스트)할 때는 없다 */
+    private val seatMap: SeatMapChanges? = null,
 ) {
 
     /**
@@ -88,6 +91,7 @@ class HoldSeatProcess(
         // 좌석은 이미 영속 상태 — save()는 merge라 새 홀드의 복사본을 영속화한다. flush로 원본 홀드를 INSERT해 id를 받는다.
         productSeatRepository.flush()
         afterFlush(seat)
+        seatMap?.publish(seat.scheduleId, listOf(seat.id!!)) // ADR-019 — 커밋 뒤(조건부 UPDATE 전략의 holdIfAvailable도 이 트랜잭션)
         return HoldSeatResult(holdId = hold.id!!, seatId = seat.id!!, expiresAt = hold.expiresAt)
     }
 }

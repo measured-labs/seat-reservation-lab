@@ -6,6 +6,7 @@ import com.jun.labs.seatreservation.service.SeatConfirmProperties
 import com.jun.labs.seatreservation.service.impl.drift.ExpiryCounters
 import com.jun.labs.seatreservation.service.impl.expiry.lockQuotaPairs
 import com.jun.labs.seatreservation.service.impl.payment.PaymentIntents
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
@@ -34,6 +35,7 @@ class HoldReleaseService(
     private val groups: HoldGroupGuard,
     private val clock: Clock,
     confirmProperties: SeatConfirmProperties,
+    private val seatMap: SeatMapChanges,
 ) {
     /**
      * 결제 시작이 있는 확정 모드(conditional · conditional-extend)에서만 '결제 중 해제 409'가 성립한다 —
@@ -127,6 +129,7 @@ class HoldReleaseService(
             """.trimIndent(),
             seats.toTypedArray(), Timestamp.from(clock.instant()),
         )
+        seatMap.publish(scheduleId, seats) // ADR-019 — 커밋 뒤
     }
 
     /** 카운터 복구 기록의 커밋 · 롤백 처리는 만료 틱과 같은 경계로(롤백되면 시도한 쌍을 skipped로 남긴다) */

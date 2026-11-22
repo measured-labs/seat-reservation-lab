@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.postgresql.util.PSQLException
@@ -50,6 +51,7 @@ class ConfirmReservationService(
     private val confirmProperties: SeatConfirmProperties,
     private val meters: MeterRegistry,
     private val atomicConfirm: AtomicConfirmProcess,
+    private val seatMap: SeatMapChanges,
 ) : ConfirmReservationUseCase {
 
     @Transactional
@@ -91,6 +93,7 @@ class ConfirmReservationService(
         }
         // ADR-012 ⓐ: 확정은 실제 값 쪽만 바꾼다(쿼터 행 그대로) — 앱 경로라 그 쌍을 등록한다(§2.3 '앱 경로면 봄'). method ≠ memory면 아무것도 안 함
         changes.changed(seat.scheduleId, command.userId)
+        seatMap.publish(seat.scheduleId, listOf(seat.id!!)) // ADR-019 — 엔티티 확정(커밋 뒤)
         return ConfirmReservationResult(
             reservationId = reservation.id!!,
             seatId = seat.id!!,

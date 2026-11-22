@@ -6,6 +6,7 @@ import com.jun.labs.seatreservation.service.impl.expiry.LazyExpiryBatch.Companio
 import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companion.DELETED_METRIC
 import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companion.MISSING_METRIC
 import com.jun.labs.seatreservation.service.impl.expiry.LazyHoldProcess.Companion.REVERT_METRIC
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
@@ -26,6 +27,7 @@ class SweepConditionalBatch(
     private val jdbc: JdbcTemplate,
     private val counters: ExpiryCounters,
     private val meters: MeterRegistry,
+    private val seatMap: SeatMapChanges,
 ) {
     /**
      * 바깥(틱) 트랜잭션 안에서 부른다 — 지운 홀드 행 수 + 지표 기록. 지표(deleted · revert · extension_lost)는 호출자가 틱 커밋 뒤에
@@ -86,6 +88,8 @@ class SweepConditionalBatch(
         }
         if (deleted.isEmpty()) return Outcome.NONE
         val revert = revertSeats(deleted.map { it.seatId }.distinct(), ts)
+        // ADR-019 — 지운 홀드의 좌석(되돌리지 않은 좌석도 — 방향 무관 · 틱 커밋 뒤)
+        deleted.groupBy({ it.scheduleId }, { it.seatId }).forEach { (scheduleId, seats) -> seatMap.publish(scheduleId, seats.distinct()) }
         val extended = deleted.count { it.extended }
         val total = deleted.size
         // A′의 WHERE가 expires_at <= :now라 lost는 구조적으로 0 — 0이 아니면 창이 열린 것이다(무음 아님). 로그는 사건 기록이라 그 자리에서 남긴다(지표만 커밋 뒤)

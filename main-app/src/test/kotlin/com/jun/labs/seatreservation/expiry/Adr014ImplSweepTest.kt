@@ -48,11 +48,14 @@ class Adr014ImplSweepTest : Adr014ImplSupport() {
             jsonPath("$[0].section") { value("A") }
             jsonPath("$[0].rowNo") { value(1) }
             jsonPath("$[0].seatNo") { exists() }
-            jsonPath("$[0].status") { value("AVAILABLE") }
-            jsonPath("$[1].status") { value("HELD") }
+            // ADR-019 설계-1: 두 상태(available) — HELD · RESERVED는 false로 같고, 저장 상태는 DB로 따로 본다
+            jsonPath("$[0].available") { value(true) }
+            jsonPath("$[1].available") { value(false) }
             jsonPath("$[2].seatId") { value(r) }
-            jsonPath("$[2].status") { value("RESERVED") }
+            jsonPath("$[2].available") { value(false) }
+            jsonPath("$[0].status") { doesNotExist() }
         }
+        assertEquals(listOf("HELD", "RESERVED"), listOf(h, r).map { jdbcTemplate.queryForObject("SELECT status FROM product_seat WHERE id = ?", String::class.java, it) })
         mockMvc.get("/api/schedules/${s + 999}/seats").andExpect {
             status { isNotFound() }
             jsonPath("$.code") { value("SEAT_NOT_FOUND") }

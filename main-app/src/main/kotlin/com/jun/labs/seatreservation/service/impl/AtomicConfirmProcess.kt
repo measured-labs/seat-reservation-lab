@@ -8,6 +8,7 @@ import com.jun.labs.seatreservation.service.ConfirmReservationCommand
 import com.jun.labs.seatreservation.service.ConfirmReservationResult
 import com.jun.labs.seatreservation.service.SeatConfirmProperties
 import com.jun.labs.seatreservation.service.impl.drift.MemoryChangedPairs
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -35,6 +36,7 @@ class AtomicConfirmProcess(
     private val changes: MemoryChangedPairs,
     private val meters: MeterRegistry,
     private val confirmProperties: SeatConfirmProperties,
+    private val seatMap: SeatMapChanges,
 ) {
     /** 바깥 트랜잭션 안에서 부른다 — [mode]는 current가 아니어야 한다 */
     fun confirm(mode: ConfirmMode, command: ConfirmReservationCommand): ConfirmReservationResult {
@@ -57,6 +59,7 @@ class AtomicConfirmProcess(
         })
         // ADR-012 ⓐ: 확정은 실제 값 쪽만 바꾼다(쿼터 행 그대로) — current와 같은 등록(method ≠ memory면 아무것도 안 함)
         changes.changed(converted.scheduleId, command.userId)
+        seatMap.publish(converted.scheduleId, listOf(converted.seatId)) // ADR-019 — ① · ④ · ③은 HELD → RESERVED · ②는 조건 없는 전환(방향 무관 · 커밋 뒤)
         return ConfirmReservationResult(reservationId = reservationId, seatId = converted.seatId, status = ReservationStatus.CONFIRMED)
     }
 

@@ -5,6 +5,7 @@ import com.jun.labs.seatreservation.service.CompensationMode
 import com.jun.labs.seatreservation.service.HoldStrategyType
 import com.jun.labs.seatreservation.service.SeatHoldProperties
 import com.jun.labs.seatreservation.service.UserLimitStrategyType
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import org.springframework.context.annotation.Profile
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.jdbc.core.JdbcTemplate
@@ -34,6 +35,8 @@ class LoadtestDataService(
     private val injector: AppPathInjector? = null,
     /** ADR-017 보상 모드 — pay_rejected_without_task는 모드 ≠ none에서만 기대 0이다(직접 생성하면 없다 → 모드 모름 · 항목은 그대로 낸다) */
     private val compensation: CompensationProperties? = null,
+    /** ADR-019 좌석 맵 변경 신호(초기화 = 전체 비움) — 직접 생성(판정기 테스트)할 때는 없다 */
+    private val seatMap: SeatMapChanges? = null,
 ) {
 
     /**
@@ -93,6 +96,8 @@ class LoadtestDataService(
             schedules, seatsPerSchedule,
         )
         if (backgroundRows > 0) seedBackground(schedules, seatsPerSchedule, backgroundRows)
+        // ADR-019 설계-3 — 회차를 지우고 같은 id로 다시 만들었으므로 커밋 뒤 좌석 맵 캐시 전체를 비운다(회차 하나 무효화로는 지워진 회차가 남는다)
+        seatMap?.publishAll()
         return ResetResult(
             schedules = schedules, seatsPerSchedule = seatsPerSchedule, seatsPerRow = SEATS_PER_ROW,
             backgroundRows = backgroundRows,

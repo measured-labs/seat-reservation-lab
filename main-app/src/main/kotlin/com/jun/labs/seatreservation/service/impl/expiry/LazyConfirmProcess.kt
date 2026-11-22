@@ -7,6 +7,7 @@ import com.jun.labs.seatreservation.service.ConfirmReservationCommand
 import com.jun.labs.seatreservation.service.ConfirmReservationResult
 import com.jun.labs.seatreservation.service.SeatHoldProperties
 import com.jun.labs.seatreservation.service.impl.drift.MemoryChangedPairs
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -30,6 +31,7 @@ class LazyConfirmProcess(
     private val properties: SeatHoldProperties,
     private val clock: Clock,
     private val changes: MemoryChangedPairs,
+    private val seatMap: SeatMapChanges,
 ) {
     fun confirm(command: ConfirmReservationCommand): ConfirmReservationResult = tx.execute { confirmInTx(command) }!!
 
@@ -57,6 +59,7 @@ class LazyConfirmProcess(
         if (judged["mine_active"] != true || judged["other_active"] == true) throw SeatReservationException(ErrorCode.HOLD_EXPIRED)
         // K4~K6 전환(지금과 같은 쓰기) — created_at은 지금처럼 앱 Clock(만료 판정이 아니다)
         jdbc.update("UPDATE product_seat SET status = 'RESERVED' WHERE id = ?", seatId)
+        seatMap.publish(scheduleId, listOf(seatId)) // ADR-019 — 조건 없는 전환(커밋 뒤)
         jdbc.update("DELETE FROM seat_hold WHERE id = ?", command.holdId)
         val reservationId = jdbc.queryForObject(
             """

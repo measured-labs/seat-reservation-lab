@@ -12,6 +12,7 @@ import com.jun.labs.seatreservation.service.impl.drift.MemoryChangedPairs
 import com.jun.labs.seatreservation.service.impl.hold.PessimisticNoWaitHoldStrategy
 import com.jun.labs.seatreservation.service.impl.hold.sqlStateOf
 import com.jun.labs.seatreservation.service.impl.limit.limitExceeded
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapChanges
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
@@ -37,6 +38,7 @@ class HoldGroupService(
     private val groupProperties: HoldGroupProperties,
     private val changes: MemoryChangedPairs,
     private val clock: Clock,
+    private val seatMap: SeatMapChanges,
 ) {
     private val upsertSql = if (holdProperties.counterDrift.reconcile.incremental.method == IncrementalMethod.STMT) UPSERT_N_STMT_SQL else UPSERT_N_SQL
 
@@ -73,6 +75,7 @@ class HoldGroupService(
             HoldGroupMode.SPLIT -> split(scheduleId, userId, idArray, n, now, expiresAt)
             HoldGroupMode.ONE_SHOT -> oneShot(scheduleId, userId, idArray, n, now, expiresAt)
         }
+        seatMap.publish(scheduleId, ids) // ADR-019 — split · one-shot 모두 N석 HELD(커밋 뒤 · 거부면 롤백이라 신호 없음)
         return HoldGroupResult(holds.first, expiresAt, holds.second.sortedBy { it.seatId })
     }
 

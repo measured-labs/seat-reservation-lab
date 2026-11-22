@@ -70,11 +70,13 @@ abstract class Adr014SweepContractBase : IntegrationTest() {
         val r = mockMvc.get("/api/schedules/$s/seats").andReturn().response
         assertEquals(200, r.status, r.contentAsString)
         val node = objectMapper.readTree(r.contentAsString)
+        // ADR-019 설계-1: 응답은 두 상태(available) — 배치 전 만료 홀드 좌석(저장 HELD)도 false · HELD와 RESERVED는 DB 저장 상태로 따로 본다
         assertEquals(
-            listOf(free.id to "AVAILABLE", held.id to "HELD", sold.id to "RESERVED"),
-            node.map { it.get("seatId").asLong() to it.get("status").asText() },
+            listOf(free.id to true, held.id to false, sold.id to false),
+            node.map { it.get("seatId").asLong() to it.get("available").asBoolean() },
         )
-        assertEquals(setOf("seatId", "section", "rowNo", "seatNo", "status"), node.first().fieldNames().asSequence().toSet())
+        assertEquals(listOf(SeatStatus.HELD, SeatStatus.RESERVED), listOf(seatStatus(held), seatStatus(sold)))
+        assertEquals(setOf("seatId", "section", "rowNo", "seatNo", "available"), node.first().fieldNames().asSequence().toSet())
         mockMvc.get("/api/schedules/987654321/seats").andExpect { status { isNotFound() } }
     }
 }

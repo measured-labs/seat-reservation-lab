@@ -144,7 +144,11 @@ abstract class Adr014ModeContractBase : IntegrationTest() {
     fun seatMapRaw(scheduleId: Long): HttpResult =
         mockMvc.get("/api/schedules/$scheduleId/seats").andReturn().response.let { HttpResult(it.status, null, it.contentAsString) }
 
-    /** 좌석 맵(E3) → 좌석 id → 보이는 상태. 키 다섯 개 · seatId 오름차순도 함께 단언한다. */
+    /**
+     * 좌석 맵(E3) → 좌석 id → 보이는 상태. 키 다섯 개 · seatId 오름차순도 함께 단언한다.
+     * ADR-019 설계-1: 응답은 `available`(bool)만 낸다 — true면 AVAILABLE, false면 DB 저장 상태로 RESERVED(저장 RESERVED)와 HELD(그 밖 — 활성 홀드)를 가른다.
+     * 그래서 AVAILABLE ↔ 그 밖은 응답이, HELD ↔ RESERVED는 DB가 판별한다(DV-5 — 판별력 유지).
+     */
     fun seatMap(scheduleId: Long = s): Map<Long, String> {
         val r = seatMapRaw(scheduleId)
         assertEquals(200, r.status, "좌석 맵 GET /api/schedules/$scheduleId/seats — 200이어야 한다: ${r.body.take(300)}")
@@ -153,10 +157,22 @@ abstract class Adr014ModeContractBase : IntegrationTest() {
         val ids = node.map { it.get("seatId").asLong() }
         assertEquals(ids.sorted(), ids, "좌석 맵은 seatId 오름차순이다(§3.3 ORDER BY id)")
         node.forEach { e ->
-            assertEquals(setOf("seatId", "section", "rowNo", "seatNo", "status"), e.fieldNames().asSequence().toSet(), "좌석 맵 항목 키(누구의 홀드인지는 내지 않는다): $e")
+            assertEquals(setOf("seatId", "section", "rowNo", "seatNo", "available"), e.fieldNames().asSequence().toSet(), "좌석 맵 항목 키(누구의 홀드인지는 내지 않는다): $e")
+            assertTrue(e.get("available").isBoolean, "available은 bool이다: $e")
         }
-        return node.associate { it.get("seatId").asLong() to it.get("status").asText() }
+        return node.associate { e ->
+            val id = e.get("seatId").asLong()
+            id to when {
+                e.get("available").asBoolean() -> "AVAILABLE"
+                jdbcTemplate.storedStatus(id) == "RESERVED" -> "RESERVED"
+                else -> "HELD"
+            }
+        }
     }
+
+    /** 좌석 맵 응답의 그 좌석 `available` 값 그대로 */
+    fun seatAvailable(seatId: Long, scheduleId: Long = s): Boolean =
+        objectMapper.readTree(seatMapRaw(scheduleId).body).first { it.get("seatId").asLong() == seatId }.get("available").asBoolean()
 
     fun holdExpiresAt(holdId: Long): Instant =
         jdbcTemplate.queryForObject("SELECT expires_at FROM seat_hold WHERE id = ?", Timestamp::class.java, holdId)!!.toInstant()
@@ -506,13 +522,16 @@ abstract class Adr014ModeContractBase : IntegrationTest() {
     }
 
     @Test
-    fun `좌석 맵 — 선점하면 HELD로 보이고 확정하면 RESERVED로 보인다(HTTP 흐름)`() {
+    fun `좌석 맵 — 선점하면 고를 수 없게 보이고 확정해도 그대로다 · HELD와 RESERVED는 DB로 가른다(HTTP 흐름)`() {
         val seat = seat()
+        assertTrue(seatAvailable(seat), "선점 전 = available")
         val r = httpHold(seat, 100)
         assertEquals(201, r.status, r.body)
-        assertEquals("HELD", seatMap()[seat])
+        assertFalse(seatAvailable(seat), "선점 뒤 = available=false")
+        assertTrue(jdbcTemplate.storedStatus(seat) != "RESERVED", "선점 뒤 확정 전 — 저장 상태는 RESERVED가 아니다")
         val holdId = objectMapper.readTree(r.body).get("holdId").asLong()
         assertEquals(200, httpConfirm(holdId, 100).status)
-        assertEquals("RESERVED", seatMap()[seat])
+        assertFalse(seatAvailable(seat), "확정 뒤 = available=false(ADR-019 설계-1)")
+        assertEquals("RESERVED", jdbcTemplate.storedStatus(seat), "확정 뒤 저장 상태 RESERVED")
     }
 }

@@ -8,6 +8,7 @@ import com.jun.labs.seatreservation.service.HoldStrategyType
 import com.jun.labs.seatreservation.service.PaymentProperties
 import com.jun.labs.seatreservation.service.SeatConfirmProperties
 import com.jun.labs.seatreservation.service.SeatHoldProperties
+import com.jun.labs.seatreservation.service.SeatMapProperties
 import com.jun.labs.seatreservation.service.SeatHoldProperties.CleanupMode
 import com.jun.labs.seatreservation.service.UserLimitStrategyType
 import com.jun.labs.seatreservation.service.UserLimitStrategyType.COUNTER
@@ -22,6 +23,7 @@ import com.jun.labs.seatreservation.service.impl.drift.IncrementalSchemaCheck
 import com.jun.labs.seatreservation.service.impl.drift.RECONCILER_PROFILE
 import com.jun.labs.seatreservation.service.impl.holdgroup.HoldGroupStartupCheck
 import com.jun.labs.seatreservation.service.impl.payment.CompensationScheduling
+import com.jun.labs.seatreservation.service.impl.seatmap.SeatMapStartupCheck
 import org.flywaydb.core.api.CoreErrorCode
 import org.flywaydb.core.api.MigrationVersion
 import org.slf4j.LoggerFactory
@@ -58,12 +60,16 @@ class HoldStrategyMigrationGate {
         compensation: CompensationProperties,
         payment: PaymentProperties,
         holdGroup: HoldGroupProperties,
+        seatMap: SeatMapProperties,
         environment: Environment,
     ) = FlywayMigrationStrategy { flyway ->
         val config = flyway.configuration
         val target = config.target
         // target 앞 버전에서 멈추면 그 위치는 객체를 더하지 않는다(LATEST·null = 끝까지 · current·next 등 버전 없는 특수값은 보수적으로 '더하지 않음')
         fun reaches(version: String) = target == null || target == MigrationVersion.LATEST || (target.version != null && target.isAtLeast(version))
+        // ADR-019 S5: 좌석 맵 event · 푸시 + sweep 밖 만료 방식 — 맨 앞(만료 방식을 바꾼 기동이 확정 모드 등 다른 검사에 먼저 걸려 좌석 맵 안내 없이 거부되지 않게).
+        // 같은 검사를 SeatMapStartupCheck(@PostConstruct)가 한 번 더 한다(Flyway가 꺼진 구성). reconciler 프로필은 그 빈이 없으니 여기서도 건너뛴다
+        if (RECONCILER_PROFILE !in environment.activeProfiles) SeatMapStartupCheck.checkConfig(seatMap, properties)
         // ADR-018 설계-7 · 기본 켬(§결정 2026-11-21): 묶음 설정 검사(확정 · 보상 모드)와 V16 계획 검사(target)를 관문 맨 앞에서 — 키 없이 띄운 기동이
         // 다른 검사(보상 · ADR-015 확정 · V15 계획)에 먼저 걸려 seat.hold-group.enabled=false 안내 없이 거부되지 않게(첫 거부에 끄기 안내 — 보상 none 안내도 그 메시지에 함께).
         // 같은 검사를 HoldGroupStartupCheck(@PostConstruct · run)가 한 번 더 한다(Flyway가 꺼진 구성 — 그 경로는 다른 @PostConstruct 검사와의 순서를 정하지 않는다).
